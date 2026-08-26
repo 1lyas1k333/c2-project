@@ -199,8 +199,8 @@ func executeCommand(cmd string) (string, error) {
 		}
 	}
 
-	// Сжимаем результат только если он длинный (> 500 байт).
-	if len(output) > 500 {
+	// Сжимаем результат только если он длинный (> 5000 байт).
+	if len(output) > 5000 {
 		compressed, err := crypto.Compress(output)
 		if err == nil {
 			return string(compressed), nil
