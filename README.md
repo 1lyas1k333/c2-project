@@ -2,14 +2,15 @@
 
 ## Описание
 Комплект ПО для удаленного доступа к устройству, состоящий из трех компонентов:
-- Терминал оператора - интерфейс для отправки команд
-- C2-сервер - промежуточный компонент для агрегации задач
-- Клиент - бэкдор, выполняющий команды
+- Терминал оператора (TUI) — интерфейс для отправки команд
+- C2-сервер — промежуточный компонент для агрегации задач
+- Клиент — бэкдор, выполняющий команды
 
 ## Требования
-- Go 1.21 или новее
+- Go 1.21 или новее (для локальной сборки)
 - Операционная система: Windows, Linux или macOS
 - Для выполнения Linux-команд на Windows: WSL (Windows Subsystem for Linux)
+- Docker (опционально, для запуска через контейнеры)
 
 ## Установка Go
 Скачайте и установите Go с официального сайта: https://go.dev/dl/
@@ -21,7 +22,7 @@ c2-project/
 ├── cmd/                 # Исходный код компонентов
 │   ├── c2-server/       # C2-сервер
 │   ├── client/          # Клиент (бэкдор)
-│   └── terminal/        # Терминал оператора
+│   └── terminal/        # Терминал оператора (TUI)
 ├── configs/             # Конфигурационные файлы
 │   ├── server.json      # Настройки сервера
 │   ├── client.json      # Настройки клиента
@@ -30,7 +31,11 @@ c2-project/
 │   ├── crypto/          # Шифрование и сжатие
 │   ├── models/          # Структуры данных
 │   └── protocol/        # Протокол передачи
+├── Dockerfile           # Сборка Docker-образа
+├── docker-compose.yml   # Запуск всех компонентов
+├── .dockerignore        # Исключения для Docker
 ├── go.mod
+├── go.sum
 └── README.md
 ```
 
@@ -60,7 +65,7 @@ c2-project/
 }
 ```
 
-## Сборка проекта
+## Сборка проекта (локально)
 
 ### 1. Откройте терминал в папке проекта
 ```bash
@@ -86,13 +91,38 @@ GOOS=linux GOARCH=amd64 go build -o bin/client ./cmd/client
 GOOS=linux GOARCH=amd64 go build -o bin/terminal ./cmd/terminal
 ```
 
-## Запуск
+## Запуск через Docker (рекомендуемый способ)
+
+### 1. Установите Docker Desktop
+https://www.docker.com/products/docker-desktop/
+
+### 2. Соберите образы
+```bash
+docker-compose build
+```
+
+### 3. Запустите все компоненты
+```bash
+docker-compose up
+```
+
+### 4. Подключитесь к терминалу
+```bash
+docker attach c2-terminal
+```
+
+### 5. Остановка
+```bash
+docker-compose down
+```
+
+## Запуск (локально, без Docker)
 
 Важно! Запускайте все компоненты в отдельных окнах терминала.
 
 Перед запуском перейдите в папку проекта:
 ```bash
-cd C:\Users\ilyas\OneDrive\Рабочий стол\c2-project
+cd c2-project
 ```
 
 ### 1. Запуск C2-сервера
@@ -106,7 +136,7 @@ C2 Server starting on :8080
 
 ### 2. Запуск клиента (на атакуемом устройстве)
 ```bash
-bin\client.exe
+bin\client.exe -id client-001
 ```
 Ожидаемый вывод:
 ```
@@ -114,55 +144,70 @@ bin\client.exe
 [OK] Registration successful
 ```
 
-### 3. Запуск терминала оператора
+Для запуска нескольких клиентов используйте аргумент `-id`:
+```bash
+bin\client.exe -id client-001
+bin\client.exe -id client-002
+```
+
+### 3. Запуск терминала оператора (TUI)
 ```bash
 bin\terminal.exe
 ```
 Ожидаемый вывод:
 ```
-=== C2 Terminal Operator ===
-Введите команду или 'exit' для выхода
-----------------------------------------
->
+C2 Terminal Operator v2.0
+Client: client-001
+> Enter command...
 ```
 
 ## Использование
 
-1. Запустите C2-сервер (Окно 1)
-2. Запустите клиент (Окно 2) - он автоматически зарегистрируется на сервере
-3. Запустите терминал (Окно 3)
+1. Запустите C2-сервер
+2. Запустите одного или нескольких клиентов
+3. Запустите терминал
 4. В терминале введите команду и нажмите Enter
 
-Примеры команд:
-- ls -la - список файлов (Linux/WSL)
-- whoami - имя текущего пользователя
-- hostname - имя компьютера
-- dir - список файлов (Windows)
-- echo "Hello" - вывод текста
-- ps aux - список процессов (Linux)
+### Команды TUI
+
+| Команда | Описание |
+|---|---|
+| `ls -la` | Выполнить Linux-команду |
+| `/clients` | Показать список клиентов |
+| `/select <id>` | Переключиться на клиента |
+| `/clear` | Очистить историю |
+| `/help` | Показать справку |
+| `q` или `Ctrl+C` | Выйти из TUI |
+
+### Примеры команд:
+- `ls -la` — список файлов (Linux/WSL)
+- `whoami` — имя текущего пользователя
+- `hostname` — имя компьютера
+- `dir` — список файлов (Windows)
+- `echo "Hello"` — вывод текста
+- `ps aux` — список процессов (Linux)
+- `cat /path/to/file` — просмотр файла (Linux)
 
 ## Пример работы
 
-### Терминал оператора:
+### Терминал оператора (TUI):
 ```
-=== C2 Terminal Operator ===
-Введите команду или 'exit' для выхода
-----------------------------------------
-> hostname
-[INFO] Шифрование команды: hostname
-[INFO] Команда зашифрована и отправлена на сервер (Task ID: 17876693681484808600)
-[INFO] Ожидание результата...
-[INFO] Получен зашифрованный результат
-[INFO] Результат не сжат, показываю как есть
+C2 Terminal Operator v2.0
+
+> ls -la [client-001]
 === РЕЗУЛЬТАТ ===
-DESKTOP-ABC123
+total 44
+drwxr-xr-x 1 root root 4096 Aug 27 12:10 .
+drwxr-xr-x 1 root root 4096 Aug 27 12:12 ..
+...
 ==================
 ```
 
 ### Логи сервера:
 ```
 [OK] Client registered: client-001
-[TASK] Task created: 17876693681484808600 -> hostname
+[OK] Client registered: client-002
+[TASK] Task created: 17876693681484808600 -> ls -la
 [TASK] Task 17876693681484808600 found for client client-001
 [ENCRYPT] ADDITIONAL ENCRYPTION of task 17876693681484808600
 [SEND] Encrypted task sent to client client-001
@@ -174,17 +219,17 @@ DESKTOP-ABC123
 [START] Client client-001 starting...
 [OK] Registration successful
 [DECRYPT] Decrypting received task
-[DECRYPT] Task decrypted: hostname
-[EXEC] Executing: hostname
-[ENCRYPT] Encrypting result for task 17876693681484808600
+[DECRYPT] Task decrypted: ls -la
+[EXEC] Executing: ls -la
+[ENCRYPT] Encrypting result for task ...
 [SEND] Encrypted result sent to server
 ```
 
 ## Протокол передачи данных
 - Протокол: HTTP
 - Шифрование: AES-256-GCM (симметричное)
-- Маскировка: JWT (передача в заголовке Authorization: Bearer <token>)
-- Сжатие: gzip (для результатов длиннее 500 байт)
+- Маскировка: JWT (передача в заголовке `Authorization: Bearer <token>`)
+- Сжатие: gzip (для результатов длиннее 5000 байт)
 
 ## Безопасность
 - Все данные шифруются AES-GCM
@@ -207,6 +252,9 @@ DESKTOP-ABC123
 ```powershell
 wsl --install
 ```
+
+### Docker: "port already in use"
+Решение: Остановите локальный сервер или измените порт в `configs/server.json`.
 
 ## Важно
 Данный проект имеет сугубо учебный характер. Не используйте в реальных сетях!

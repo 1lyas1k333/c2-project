@@ -1,0 +1,6 @@
+bin/
+*.exe
+*.log
+.git/
+.vscode/
+*.md

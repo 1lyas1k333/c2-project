@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  # C2-сервер
+  server:
+    build: .
+    container_name: c2-server
+    ports:
+      - "8080:8080"
+    networks:
+      - c2-network
+    command: ["./bin/c2-server"]
+    restart: unless-stopped
+
+  # Клиент 1
+  client1:
+    build: .
+    container_name: c2-client-001
+    networks:
+      - c2-network
+    command: ["./bin/client", "-id", "client-001"]
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  # Клиент 2
+  client2:
+    build: .
+    container_name: c2-client-002
+    networks:
+      - c2-network
+    command: ["./bin/client", "-id", "client-002"]
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  # Терминал (интерактивный режим)
+  terminal:
+    build: .
+    container_name: c2-terminal
+    networks:
+      - c2-network
+    command: ["./bin/terminal"]
+    depends_on:
+      - server
+    stdin_open: true   # Для ввода команд
+    tty: true          # Для цветного вывода
+    restart: unless-stopped
+
+networks:
+  c2-network:
+    driver: bridge

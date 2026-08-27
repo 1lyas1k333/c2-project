@@ -1,5 +1,5 @@
 {
-    "server_url": "http://localhost:8080",
+    "server_url": "http://server:8080",
     "client_id": "client-001",
     "poll_interval": 5
 }
