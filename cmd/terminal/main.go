@@ -26,6 +26,7 @@ type TerminalConfig struct {
 }
 
 var config TerminalConfig
+var configFile = "configs/terminal.json" // По умолчанию для Docker
 
 // resultMsg - сообщение с результатом выполнения команды
 type resultMsg struct {
@@ -90,6 +91,14 @@ var (
 )
 
 func main() {
+	// Проверяем аргумент -local для локального запуска
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] == "-local" {
+			configFile = "configs/terminal.local.json"
+			break
+		}
+	}
+
 	// Загружаем конфигурацию
 	if err := loadConfig(); err != nil {
 		fmt.Printf("[WARN] Failed to load config: %v\n", err)
@@ -114,7 +123,7 @@ func main() {
 }
 
 func loadConfig() error {
-	file, err := os.Open("configs/terminal.json")
+	file, err := os.Open(configFile)
 	if err != nil {
 		return err
 	}
@@ -173,7 +182,7 @@ func initialModel() model {
 		history:  make([]string, 0),
 		status:   "Ready",
 		clientID: "client-001",
-		clients:  []string{"client-001", "client-002"}, // ← ДОБАВИЛИ client-002
+		clients:  []string{"client-001", "client-002"},
 		waiting:  false,
 	}
 }
@@ -345,19 +354,24 @@ func (m *model) sendCommandWithResult(cmd string) tea.Cmd {
 
 			if status == "completed" {
 				resultText, _ := result2["result"].(string)
-				log.Printf("[TUI DEBUG] Result received, length: %d", len(resultText))
+				log.Printf("[TUI DEBUG] Result received")
 
+				// Очищаем от лишних символов (Windows CRLF -> LF)
+				resultText = strings.TrimSpace(resultText)
+				resultText = strings.ReplaceAll(resultText, "\r\n", "\n")
+
+				// Проверяем сжатие
 				isCompressed := len(resultText) > 0 && (resultText[0] == '\x1f' || resultText[0] == 0x1f)
 				if isCompressed {
 					decompressed, err := crypto.Decompress([]byte(resultText))
 					if err == nil {
-						log.Printf("[TUI DEBUG] Decompressed result successfully")
+						log.Printf("[TUI DEBUG] Decompressed successfully")
 						return resultMsg{result: string(decompressed), status: fmt.Sprintf("Command executed on %s", m.clientID)}
 					}
 					log.Printf("[TUI DEBUG] Decompression failed, returning raw")
-					return resultMsg{result: resultText, status: fmt.Sprintf("Command executed on %s", m.clientID)}
 				}
-				log.Printf("[TUI DEBUG] Result not compressed, returning as is")
+
+				log.Printf("[TUI DEBUG] Result length: %d", len(resultText))
 				return resultMsg{result: resultText, status: fmt.Sprintf("Command executed on %s", m.clientID)}
 			} else if status == "failed" {
 				log.Printf("[TUI DEBUG] Task failed")
@@ -407,9 +421,20 @@ func (m model) View() string {
 		content.WriteString("\n")
 	}
 
-	// Результат
+	// Результат (с обрезанием по длине и высоте)
 	if m.result != "" {
-		resultBox := resultBoxStyle.Render(m.result)
+		displayResult := m.result
+		// Обрезаем по длине (максимум 2000 символов)
+		if len(displayResult) > 2000 {
+			displayResult = displayResult[:2000] + "\n... (обрезка)"
+		}
+		// Обрезаем по количеству строк (максимум 20 строк)
+		lines := strings.Split(displayResult, "\n")
+		if len(lines) > 20 {
+			lines = lines[:20]
+			displayResult = strings.Join(lines, "\n") + "\n... (ещё строки обрезаны)"
+		}
+		resultBox := resultBoxStyle.Render(displayResult)
 		content.WriteString(resultBox + "\n\n")
 	}
 

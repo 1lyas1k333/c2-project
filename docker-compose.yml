@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # C2-сервер
   server:
@@ -11,6 +9,8 @@ services:
       - c2-network
     command: ["./bin/c2-server"]
     restart: unless-stopped
+    environment:
+      - JWT_SECRET=your-256-bit-secret-key-for-jwt-signing
 
   # Клиент 1
   client1:
@@ -22,6 +22,8 @@ services:
     depends_on:
       - server
     restart: unless-stopped
+    environment:
+      - JWT_SECRET=your-256-bit-secret-key-for-jwt-signing
 
   # Клиент 2
   client2:
@@ -33,6 +35,8 @@ services:
     depends_on:
       - server
     restart: unless-stopped
+    environment:
+      - JWT_SECRET=your-256-bit-secret-key-for-jwt-signing
 
   # Терминал (интерактивный режим)
   terminal:
@@ -43,9 +47,11 @@ services:
     command: ["./bin/terminal"]
     depends_on:
       - server
-    stdin_open: true   # Для ввода команд
-    tty: true          # Для цветного вывода
+    stdin_open: true
+    tty: true
     restart: unless-stopped
+    environment:
+      - JWT_SECRET=your-256-bit-secret-key-for-jwt-signing
 
 networks:
   c2-network:
