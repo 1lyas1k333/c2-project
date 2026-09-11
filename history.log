@@ -35,3 +35,26 @@
 [2026-09-07 20:24:08] client-001 -> tasklist | findstr /i "go"
 [2026-09-07 20:25:01] client-001 -> dir C:\ && echo OK || echo FAIL
 [2026-09-07 20:25:32] client-001 -> ipconfig && systeminfo | findstr /i "OS Name"
+[2026-09-11 14:12:09] client-001 -> whoami && hostname && ver
+[2026-09-11 14:12:48] client-001 -> dir C:\ && echo  ok || echo FAIL
+[2026-09-11 14:16:17] client-001 -> whoami && hostname && ver
+[2026-09-11 14:16:49] client-001 -> dir C:\ && echo OK || echo FAIL
+[2026-09-11 14:22:21] client-001 -> whoami && hostname && ver
+[2026-09-11 14:23:19] client-001 -> dir C:\ && echo OK || echo FAIL
+[2026-09-11 14:39:13] client-001 -> whoami && hostname && ver
+[2026-09-11 14:39:34] client-001 -> dir C:\ && echo OK | echo FAIL
+[2026-09-11 14:40:07] client-001 -> ipconfig && systeminfo | findstr /i "OS Name"
+[2026-09-11 14:40:38] client-001 -> tasklist | findstr /i "go"
+[2026-09-11 14:41:13] client-001 -> tasklist | findstr /i "go"
+[2026-09-11 14:46:41] client-001 -> tasklist | findstr /i "go"
+[2026-09-11 14:47:05] client-001 -> whoami && hostname && ver
+[2026-09-11 14:47:22] client-001 -> dir C:\ && echo OK || echo FAIL
+[2026-09-11 14:47:59] client-001 -> ipconfig && systeminfo | findstr /i "OS Name"
+[2026-09-11 14:50:34] client-001 -> ipconfig && systeminfo | findstr /i "OS Name"
+[2026-09-11 14:51:05] client-001 -> tasklist | findstr /i "go"
+[2026-09-11 14:52:27] client-001 -> dir C:\ && echo OK || echo FAIL
+[2026-09-11 14:53:08] client-001 -> whoami && hostname && ver
+[2026-09-11 14:59:44] client-001 -> whoami && hostname && ver
+[2026-09-11 15:00:01] client-001 -> dir C:\ && echo OK || echo FAIL
+[2026-09-11 15:00:32] client-001 -> ipconfig && systeminfo | findstr /i "OS Name"
+[2026-09-11 15:00:56] client-001 -> tasklist | findstr /i "go"

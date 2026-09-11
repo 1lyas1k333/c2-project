@@ -1,8 +1,8 @@
+// Package crypto предоставляет функции для шифрования и дешифрования данных.
+// Используется для защиты передаваемой информации между компонентами системы.
 package crypto
 
 import (
-	"bytes"
-	"compress/gzip"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -11,11 +11,10 @@ import (
 	"io"
 )
 
-// encryptionKey - статический ключ для AES-256 (32 байта)
-// В реальном проекте должен генерироваться при первом запуске
+// encryptionKey - статический ключ для AES-256 (32 байта).
 var encryptionKey = []byte("01234567890123456789012345678901")
 
-// Encrypt - шифрует данные с использованием AES-GCM
+// Encrypt - шифрует данные с использованием AES-GCM.
 func Encrypt(plaintext []byte) (string, error) {
 	block, err := aes.NewCipher(encryptionKey)
 	if err != nil {
@@ -36,7 +35,7 @@ func Encrypt(plaintext []byte) (string, error) {
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
-// Decrypt - расшифровывает данные
+// Decrypt - расшифровывает данные.
 func Decrypt(encodedCiphertext string) ([]byte, error) {
 	ciphertext, err := base64.StdEncoding.DecodeString(encodedCiphertext)
 	if err != nil {
@@ -65,32 +64,4 @@ func Decrypt(encodedCiphertext string) ([]byte, error) {
 	}
 
 	return plaintext, nil
-}
-
-// Compress - сжимает данные с использованием gzip
-func Compress(data []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	if _, err := gz.Write(data); err != nil {
-		return nil, err
-	}
-	if err := gz.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-// Decompress - разжимает данные
-func Decompress(data []byte) ([]byte, error) {
-	reader, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
-
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, reader); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
