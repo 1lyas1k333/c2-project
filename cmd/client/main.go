@@ -21,6 +21,9 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/transform"
 )
 
 // ClientConfig - структура конфигурации клиента.
@@ -223,7 +226,9 @@ func pollTasks() (models.Task, error) {
 // executeCommand - выполняет команду в оболочке.
 // Поддерживает пайпы, логические операторы и сложные конструкции.
 // В Linux/Docker используется sh -c.
-// В Windows: если есть одиночный пайп (|), но НЕ || — PowerShell, иначе cmd /c.
+// В Windows: если есть пайп (|) — PowerShell, иначе cmd /c.
+// После выполнения конвертирует вывод из CP866 в UTF-8 (для Windows)
+// и заменяет символы-разделители разрядов "?" на пробел.
 func executeCommand(cmd string) (string, error) {
 	if len(strings.TrimSpace(cmd)) == 0 {
 		return "", fmt.Errorf("empty command")
@@ -237,12 +242,11 @@ func executeCommand(cmd string) (string, error) {
 		hasPipe := false
 		for i := 0; i < len(cmd); i++ {
 			if cmd[i] == '|' {
-				// Проверяем, что это не || (двойной пайп)
 				if i+1 < len(cmd) && cmd[i+1] == '|' {
-					continue // это ||, пропускаем
+					continue
 				}
 				if i > 0 && cmd[i-1] == '|' {
-					continue // это ||, пропускаем
+					continue
 				}
 				hasPipe = true
 				break
@@ -250,7 +254,7 @@ func executeCommand(cmd string) (string, error) {
 		}
 
 		if hasPipe {
-			// Используем PowerShell для одиночного пайпа
+			// PowerShell для одиночного пайпа
 			psCmd := cmd
 			psCmd = strings.ReplaceAll(psCmd, " && ", " ; ")
 			psCmd = strings.ReplaceAll(psCmd, " || ", " ; ")
@@ -267,6 +271,17 @@ func executeCommand(cmd string) (string, error) {
 			if err != nil && len(output) == 0 {
 				return string(output), err
 			}
+		}
+
+		// Конвертируем вывод из CP866 (OEM) в UTF-8
+		if len(output) > 0 {
+			decoder := charmap.CodePage866.NewDecoder()
+			utf8Output, _, convErr := transform.Bytes(decoder, output)
+			if convErr == nil {
+				output = utf8Output
+			}
+			// Заменяем "?" на пробел (разделители разрядов)
+			output = bytes.ReplaceAll(output, []byte("?"), []byte(" "))
 		}
 	} else {
 		// Linux/Docker: используем sh -c

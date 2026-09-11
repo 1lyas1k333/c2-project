@@ -1,11 +1,12 @@
 module c2-project
 
-go 1.21
+go 1.25.0
 
 require (
 	github.com/charmbracelet/bubbles v0.16.1
 	github.com/charmbracelet/bubbletea v0.24.2
 	github.com/charmbracelet/lipgloss v0.9.1
+	golang.org/x/text v0.41.0
 )
 
 require (
@@ -21,8 +22,7 @@ require (
 	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/muesli/termenv v0.15.2 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
-	golang.org/x/sync v0.1.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.12.0 // indirect
 	golang.org/x/term v0.6.0 // indirect
-	golang.org/x/text v0.3.8 // indirect
 )

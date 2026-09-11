@@ -1,5 +1,5 @@
 # Базовый образ с Go
-FROM golang:1.21-alpine
+FROM golang:1.25-alpine
 
 # Устанавливаем Git
 RUN apk add --no-cache git
