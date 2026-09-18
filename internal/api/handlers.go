@@ -65,7 +65,6 @@ func (h *Handler) TasksHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "created", "task_id": taskID})
 }
 
-// PollHandler - клиент опрашивает наличие задач.
 func (h *Handler) PollHandler(w http.ResponseWriter, r *http.Request) {
 	if !CheckMethod(w, r, http.MethodPost) {
 		return
@@ -76,6 +75,9 @@ func (h *Handler) PollHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing or invalid Authorization header", http.StatusBadRequest)
 		return
 	}
+
+	// ОБНОВЛЯЕМ ВРЕМЯ ПОСЛЕДНЕГО ВИЗИТА
+	h.clientService.UpdateLastSeen(clientID)
 
 	task, token, err := h.taskService.GetPendingTaskForClient(clientID)
 	if err != nil {

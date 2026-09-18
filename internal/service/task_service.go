@@ -16,11 +16,11 @@ import (
 
 // TaskService - сервис для работы с задачами.
 type TaskService struct {
-	store *storage.Storage
+	store storage.TaskStorage
 }
 
 // NewTaskService - создаёт новый TaskService.
-func NewTaskService(store *storage.Storage) *TaskService {
+func NewTaskService(store storage.TaskStorage) *TaskService {
 	return &TaskService{store: store}
 }
 
@@ -52,9 +52,6 @@ func (s *TaskService) CreateTaskFromToken(token string) (string, error) {
 // GetPendingTaskForClient - возвращает задачу для клиента
 // и дополнительно шифрует её для отправки.
 func (s *TaskService) GetPendingTaskForClient(clientID string) (models.Task, string, error) {
-	// Обновляем время последнего визита
-	s.store.UpdateClientLastSeen(clientID)
-
 	// Ищем задачу
 	task, found := s.store.GetPendingTask(clientID)
 	if !found {

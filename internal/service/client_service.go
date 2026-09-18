@@ -7,11 +7,11 @@ import (
 
 // ClientService - сервис для работы с клиентами.
 type ClientService struct {
-	store *storage.Storage
+	store storage.ClientStorage
 }
 
 // NewClientService - создаёт новый ClientService.
-func NewClientService(store *storage.Storage) *ClientService {
+func NewClientService(store storage.ClientStorage) *ClientService {
 	return &ClientService{store: store}
 }
 
@@ -28,4 +28,9 @@ func (s *ClientService) RegisterClient(clientID, ip string) error {
 func (s *ClientService) ClientExists(clientID string) bool {
 	_, exists := s.store.GetClient(clientID)
 	return exists
+}
+
+// UpdateLastSeen - обновляет время последнего визита клиента.
+func (s *ClientService) UpdateLastSeen(clientID string) {
+	s.store.UpdateClientLastSeen(clientID)
 }
