@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -67,7 +66,7 @@ func Encode(data string) (string, error) {
 func Decode(token string) (string, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return "", fmt.Errorf("invalid JWT token: expected 3 parts")
+		return "", ErrInvalidToken
 	}
 
 	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
@@ -87,7 +86,7 @@ func Decode(token string) (string, error) {
 func ParseBearerToken(authHeader string) (string, error) {
 	parts := strings.SplitN(authHeader, " ", 2)
 	if len(parts) != 2 || parts[0] != "Bearer" {
-		return "", fmt.Errorf("invalid Bearer token format")
+		return "", ErrInvalidBearer
 	}
 	return Decode(parts[1])
 }
@@ -128,7 +127,7 @@ func EncodeClientID(clientID string) (string, error) {
 func DecodeClientID(token string) (string, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return "", fmt.Errorf("invalid JWT token")
+		return "", ErrInvalidToken
 	}
 
 	signatureInput := parts[0] + "." + parts[1]
@@ -137,7 +136,7 @@ func DecodeClientID(token string) (string, error) {
 	expectedSignature := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
 
 	if expectedSignature != parts[2] {
-		return "", fmt.Errorf("invalid JWT signature")
+		return "", ErrInvalidSignature
 	}
 
 	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
