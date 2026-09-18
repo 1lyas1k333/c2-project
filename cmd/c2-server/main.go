@@ -5,6 +5,7 @@ package main
 
 import (
 	"c2-project/internal/api"
+	"c2-project/internal/service"
 	"c2-project/internal/storage"
 	"encoding/json"
 	"log"
@@ -55,8 +56,12 @@ func main() {
 	// Создаём хранилище
 	store := storage.New()
 
+	// Создаём сервисы
+	taskService := service.NewTaskService(store)
+	clientService := service.NewClientService(store)
+
 	// Создаём HTTP-хендлер
-	handler := api.NewHandler(store)
+	handler := api.NewHandler(taskService, clientService)
 
 	// Регистрируем маршруты
 	mux := http.NewServeMux()

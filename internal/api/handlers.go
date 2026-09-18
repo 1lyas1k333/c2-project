@@ -1,12 +1,7 @@
 package api
 
 import (
-	"c2-project/internal/chunk"
-	"c2-project/internal/crypto"
-	"c2-project/internal/jwt"
-	"c2-project/internal/models"
-	"c2-project/internal/protocol"
-	"c2-project/internal/storage"
+	"c2-project/internal/service"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -14,12 +9,16 @@ import (
 
 // Handler - структура с зависимостями для хендлеров.
 type Handler struct {
-	store *storage.Storage
+	taskService   *service.TaskService
+	clientService *service.ClientService
 }
 
 // NewHandler - создаёт новый Handler.
-func NewHandler(store *storage.Storage) *Handler {
-	return &Handler{store: store}
+func NewHandler(taskService *service.TaskService, clientService *service.ClientService) *Handler {
+	return &Handler{
+		taskService:   taskService,
+		clientService: clientService,
+	}
 }
 
 // RegisterHandler - обрабатывает регистрацию клиента.
@@ -34,7 +33,10 @@ func (h *Handler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.store.RegisterClient(clientID, r.RemoteAddr)
+	if err := h.clientService.RegisterClient(clientID, r.RemoteAddr); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	log.Printf("[OK] Client registered: %s", clientID)
 	w.WriteHeader(http.StatusOK)
@@ -53,21 +55,13 @@ func (h *Handler) TasksHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Расшифровываем задачу
-	data, err := protocol.DecodeRequest(token)
+	taskID, err := h.taskService.CreateTaskFromToken(token)
 	if err != nil {
 		http.Error(w, "Invalid token", http.StatusBadRequest)
 		return
 	}
 
-	jsonData, _ := json.Marshal(data)
-	var task models.Task
-	json.Unmarshal(jsonData, &task)
-
-	// Сохраняем задачу через storage
-	taskID := h.store.CreateTask(task)
-
-	log.Printf("[TASK] Task created: %s -> %s", taskID, task.Command)
+	log.Printf("[TASK] Task created: %s", taskID)
 	json.NewEncoder(w).Encode(map[string]string{"status": "created", "task_id": taskID})
 }
 
@@ -83,27 +77,18 @@ func (h *Handler) PollHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Обновляем время последнего визита
-	h.store.UpdateClientLastSeen(clientID)
+	task, token, err := h.taskService.GetPendingTaskForClient(clientID)
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
 
-	// Ищем задачу для клиента
-	task, found := h.store.GetPendingTask(clientID)
-	if !found {
+	if token == "" {
 		json.NewEncoder(w).Encode(map[string]string{"status": "no_tasks"})
 		return
 	}
 
 	log.Printf("[TASK] Task %s found for client %s", task.ID, clientID)
-	log.Printf("[ENCRYPT] ADDITIONAL ENCRYPTION of task %s", task.ID)
-
-	// Дополнительно шифруем задачу перед отправкой
-	token, err := protocol.EncodeRequest(task)
-	if err != nil {
-		http.Error(w, "Encoding error", http.StatusInternalServerError)
-		return
-	}
-
-	log.Printf("[SEND] Encrypted task sent to client %s", clientID)
 	w.Header().Set("Authorization", "Bearer "+token)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
@@ -120,74 +105,12 @@ func (h *Handler) ResultsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[DEBUG] Received result token: %s...", token[:30])
-
-	// Парсим JWT
-	encrypted, err := jwt.Decode(token)
-	if err != nil {
-		log.Printf("[ERROR] JWT decode error: %v", err)
-		http.Error(w, "Invalid JWT token", http.StatusBadRequest)
+	if err := h.taskService.SaveTaskResult(token); err != nil {
+		log.Printf("[ERROR] Failed to save result: %v", err)
+		http.Error(w, "Invalid result", http.StatusBadRequest)
 		return
 	}
 
-	// Расшифровываем данные
-	decrypted, err := crypto.Decrypt(encrypted)
-	if err != nil {
-		log.Printf("[ERROR] Decryption error: %v", err)
-		http.Error(w, "Decryption error", http.StatusBadRequest)
-		return
-	}
-
-	// Пробуем распарсить как чанк
-	var c chunk.Chunk
-	if err := json.Unmarshal(decrypted, &c); err == nil && c.Type != "" {
-		result, completed := chunk.Assemble(c)
-		if !completed {
-			log.Printf("[DEBUG] Chunk received, assembling...")
-			json.NewEncoder(w).Encode(map[string]string{"status": "assembling"})
-			return
-		}
-		log.Printf("[DEBUG] All chunks assembled, result length: %d", len(result))
-
-		decryptedResult, err := crypto.Decrypt(result)
-		if err != nil {
-			log.Printf("[ERROR] Failed to decrypt assembled data: %v", err)
-			http.Error(w, "Decryption error", http.StatusBadRequest)
-			return
-		}
-
-		var finalResult map[string]interface{}
-		if err := json.Unmarshal(decryptedResult, &finalResult); err != nil {
-			log.Printf("[ERROR] Failed to parse assembled data: %v", err)
-			http.Error(w, "Invalid assembled data", http.StatusBadRequest)
-			return
-		}
-
-		taskID, _ := finalResult["task_id"].(string)
-		output, _ := finalResult["output"].(string)
-		status, _ := finalResult["status"].(string)
-
-		h.store.UpdateTaskResult(taskID, output, status)
-
-		log.Printf("[RESULT] Result received: %s -> %s", taskID, status)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-		return
-	}
-
-	// Обычное сообщение (не чанк)
-	var result map[string]interface{}
-	if err := json.Unmarshal(decrypted, &result); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	taskID, _ := result["task_id"].(string)
-	output, _ := result["output"].(string)
-	status, _ := result["status"].(string)
-
-	h.store.UpdateTaskResult(taskID, output, status)
-
-	log.Printf("[RESULT] Result received: %s -> %s", taskID, status)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
@@ -203,8 +126,8 @@ func (h *Handler) GetResultHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, exists := h.store.GetTask(taskID)
-	if !exists {
+	task, err := h.taskService.GetTaskResult(taskID)
+	if err != nil {
 		http.Error(w, "Task not found", http.StatusNotFound)
 		return
 	}
