@@ -4,8 +4,12 @@ package main
 
 import (
 	"c2-project/internal/service/client"
+	"context"
 	"flag"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
@@ -26,9 +30,25 @@ func main() {
 		log.Fatalf("Failed to create client service: %v", err)
 	}
 
-	// Запускаем
-	if err := srv.Run(); err != nil {
-		log.Fatalf("Client error: %v", err)
+	// Обработка сигналов Ctrl+C
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Запускаем клиент в горутине
+	done := make(chan struct{})
+	go func() {
+		if err := srv.Run(); err != nil {
+			log.Printf("Client error: %v", err)
+		}
+		close(done)
+	}()
+
+	// Ждём либо сигнала, либо завершения клиента
+	select {
+	case <-ctx.Done():
+		log.Println("[STOP] Received shutdown signal")
+	case <-done:
+		log.Println("[STOP] Client finished")
 	}
 
 	// Штатное завершение

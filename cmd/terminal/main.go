@@ -3,6 +3,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -79,11 +80,12 @@ func main() {
 	// ОТКЛЮЧАЕМ ЛОГИ — они ломают TUI в Windows CMD
 	log.SetOutput(io.Discard)
 
-	for i := 1; i < len(os.Args); i++ {
-		if os.Args[i] == "-local" {
-			configFile = "configs/terminal.local.json"
-			break
-		}
+	// Парсим аргументы командной строки
+	localFlag := flag.Bool("local", false, "...")
+	flag.Parse()
+
+	if *localFlag {
+		configFile = "configs/terminal.local.json"
 	}
 
 	// Создаём сервис
