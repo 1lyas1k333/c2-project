@@ -3,6 +3,7 @@
 package api
 
 import (
+	"c2-project/internal/jwt"
 	"net/http"
 	"strings"
 )
@@ -27,12 +28,15 @@ func GetTokenFromBearer(authHeader string) string {
 	return parts[1]
 }
 
-// GetClientIDFromBearer - извлекает client_id из заголовка Authorization.
-// Ожидает формат: "Bearer <client_id>".
+// GetClientIDFromBearer - извлекает client_id из JWT-токена в заголовке Authorization.
 func GetClientIDFromBearer(authHeader string) string {
 	parts := strings.SplitN(authHeader, " ", 2)
 	if len(parts) != 2 || parts[0] != "Bearer" {
 		return ""
 	}
-	return parts[1]
+	clientID, err := jwt.DecodeClientID(parts[1])
+	if err != nil {
+		return ""
+	}
+	return clientID
 }

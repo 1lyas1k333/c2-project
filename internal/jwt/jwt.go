@@ -23,16 +23,17 @@ type JWTPayload struct {
 	Sub  string `json:"sub,omitempty"`
 	Name string `json:"name,omitempty"`
 	Iat  int64  `json:"iat"`
-	Data string `json:"data,omitempty"` // Сюда кладём зашифрованные данные
+	Data string `json:"data,omitempty"`
 	Exp  int64  `json:"exp,omitempty"`
 }
 
-// secret - секретный ключ для подписи JWT
-var secret = []byte("your-256-bit-secret-key-for-jwt-signing")
+// getSecret - возвращает секретный ключ для подписи JWT.
+func getSecret() []byte {
+	return []byte("your-256-bit-secret-key-for-jwt-signing")
+}
 
 // Encode - создаёт JWT-токен с зашифрованными данными в поле Data
 func Encode(data string) (string, error) {
-	// Заголовок
 	header := JWTHeader{
 		Alg: "HS256",
 		Typ: "JWT",
@@ -43,7 +44,6 @@ func Encode(data string) (string, error) {
 	}
 	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
 
-	// Полезная нагрузка
 	payload := JWTPayload{
 		Iat:  time.Now().Unix(),
 		Data: data,
@@ -54,9 +54,8 @@ func Encode(data string) (string, error) {
 	}
 	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
 
-	// Подпись
 	signatureInput := headerB64 + "." + payloadB64
-	h := hmac.New(sha256.New, secret)
+	h := hmac.New(sha256.New, getSecret())
 	h.Write([]byte(signatureInput))
 	signature := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
 
@@ -71,7 +70,6 @@ func Decode(token string) (string, error) {
 		return "", fmt.Errorf("invalid JWT token: expected 3 parts")
 	}
 
-	// Декодируем payload (проверку подписи пропускаем)
 	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
 		return "", err
@@ -92,4 +90,65 @@ func ParseBearerToken(authHeader string) (string, error) {
 		return "", fmt.Errorf("invalid Bearer token format")
 	}
 	return Decode(parts[1])
+}
+
+// EncodeClientID - создаёт JWT-токен с client_id в поле Sub.
+// Используется для регистрации и опроса задач (маскировка под аутентификацию).
+func EncodeClientID(clientID string) (string, error) {
+	header := JWTHeader{
+		Alg: "HS256",
+		Typ: "JWT",
+	}
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		return "", err
+	}
+	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
+
+	payload := JWTPayload{
+		Sub: clientID,
+		Iat: time.Now().Unix(),
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
+
+	signatureInput := headerB64 + "." + payloadB64
+	h := hmac.New(sha256.New, getSecret())
+	h.Write([]byte(signatureInput))
+	signature := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+
+	token := signatureInput + "." + signature
+	return token, nil
+}
+
+// DecodeClientID - извлекает client_id из JWT-токена (поле Sub).
+func DecodeClientID(token string) (string, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid JWT token")
+	}
+
+	signatureInput := parts[0] + "." + parts[1]
+	h := hmac.New(sha256.New, getSecret())
+	h.Write([]byte(signatureInput))
+	expectedSignature := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+
+	if expectedSignature != parts[2] {
+		return "", fmt.Errorf("invalid JWT signature")
+	}
+
+	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", err
+	}
+
+	var payload JWTPayload
+	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+		return "", err
+	}
+
+	return payload.Sub, nil
 }

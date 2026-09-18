@@ -5,6 +5,7 @@ package chunk
 import (
 	"encoding/base64"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -42,8 +43,10 @@ type Session struct {
 	Result    string   `json:"result,omitempty"`
 }
 
-// sessions - хранилище сессий
-var sessions = make(map[string]*Session)
+var (
+	sessions   = make(map[string]*Session)
+	sessionsMu sync.RWMutex // ← ЗАЩИТА МАПЫ
+)
 
 // Split - разбивает данные на чанки
 // Возвращает слайс чанков и ID сессии
@@ -104,9 +107,11 @@ func Split(data string, chunkSize int) ([]Chunk, string) {
 	return chunks, sessionID
 }
 
-// Assemble - собирает данные из чанков
-// Возвращает собранные данные и флаг завершения
+// Assemble - собирает данные из чанков (с защитой мьютексом).
 func Assemble(chunk Chunk) (string, bool) {
+	sessionsMu.Lock()
+	defer sessionsMu.Unlock()
+
 	session, exists := sessions[chunk.ID]
 	if !exists {
 		session = &Session{
@@ -119,7 +124,6 @@ func Assemble(chunk Chunk) (string, bool) {
 	}
 
 	if chunk.Type == Start {
-		// Начинаем новую сессию
 		session.Total = chunk.Total
 		session.Received = 0
 		session.Data = make([]string, chunk.Total)
@@ -128,28 +132,23 @@ func Assemble(chunk Chunk) (string, bool) {
 	}
 
 	if chunk.Type == End {
-		// Проверяем, что все чанки получены
 		if session.Received == session.Total {
 			session.Completed = true
-			// Собираем данные
 			var fullData string
 			for _, part := range session.Data {
 				fullData += part
 			}
-			// Декодируем из Base64
 			decoded, err := base64.StdEncoding.DecodeString(fullData)
 			if err == nil {
 				session.Result = string(decoded)
 			}
-			// Очищаем сессию после завершения
-			defer delete(sessions, chunk.ID)
+			delete(sessions, chunk.ID)
 			return session.Result, true
 		}
 		return "", false
 	}
 
 	if chunk.Type == Data {
-		// Сохраняем данные
 		if chunk.Seq > 0 && chunk.Seq <= len(session.Data) {
 			session.Data[chunk.Seq-1] = chunk.Data
 			session.Received++
@@ -160,13 +159,24 @@ func Assemble(chunk Chunk) (string, bool) {
 	return "", false
 }
 
-// ClearSession - удаляет сессию
+// GetSession - возвращает сессию по ID (с защитой).
+func GetSession(id string) *Session {
+	sessionsMu.RLock()
+	defer sessionsMu.RUnlock()
+	return sessions[id]
+}
+
+// ClearSession - удаляет сессию (с защитой).
 func ClearSession(id string) {
+	sessionsMu.Lock()
+	defer sessionsMu.Unlock()
 	delete(sessions, id)
 }
 
-// SaveSession - сохраняет сессию в хранилище
+// SaveSession - сохраняет сессию в хранилище (с защитой).
 func SaveSession(id string, chunks []Chunk) {
+	sessionsMu.Lock()
+	defer sessionsMu.Unlock()
 	if _, exists := sessions[id]; !exists {
 		sessions[id] = &Session{
 			ID:       id,
@@ -174,9 +184,4 @@ func SaveSession(id string, chunks []Chunk) {
 			Data:     make([]string, 0),
 		}
 	}
-}
-
-// GetSession - возвращает сессию по ID
-func GetSession(id string) *Session {
-	return sessions[id]
 }

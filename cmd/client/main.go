@@ -135,7 +135,13 @@ func registerClient() {
 		return
 	}
 	// Передаём client_id в заголовке Authorization.
-	reqHTTP.Header.Set("Authorization", "Bearer "+config.ClientID)
+	// Оборачиваем client_id в JWT-токен
+	token, err := jwt.EncodeClientID(config.ClientID)
+	if err != nil {
+		log.Printf("[ERROR] Failed to encode client ID: %v", err)
+		return
+	}
+	reqHTTP.Header.Set("Authorization", "Bearer "+token)
 	reqHTTP.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(reqHTTP)
@@ -161,7 +167,11 @@ func pollTasks() (models.Task, error) {
 	if err != nil {
 		return models.Task{}, err
 	}
-	reqHTTP.Header.Set("Authorization", "Bearer "+config.ClientID)
+	token, err := jwt.EncodeClientID(config.ClientID)
+	if err != nil {
+		return models.Task{}, err
+	}
+	reqHTTP.Header.Set("Authorization", "Bearer "+token)
 	reqHTTP.Header.Set("Content-Type", "application/json")
 
 	log.Printf("[TEST] Sending poll request to %s/api/poll with client_id=%s", config.ServerURL, config.ClientID)
@@ -186,10 +196,9 @@ func pollTasks() (models.Task, error) {
 		return models.Task{}, nil
 	}
 
-	// Извлекаем зашифрованную задачу из заголовка Authorization.
 	authHeader := resp.Header.Get("Authorization")
-	token := getTokenFromBearer(authHeader)
-	if token == "" {
+	taskToken := getTokenFromBearer(authHeader)
+	if taskToken == "" {
 		log.Printf("[TEST] No Authorization header in poll response for %s", config.ClientID)
 		return models.Task{}, nil
 	}
@@ -198,7 +207,7 @@ func pollTasks() (models.Task, error) {
 
 	// Расшифровываем полученную задачу.
 	log.Println("[DECRYPT] Decrypting received task")
-	data, err := protocol.DecodeRequest(token)
+	data, err := protocol.DecodeRequest(taskToken)
 	if err != nil {
 		log.Printf("[TEST] Decryption error: %v", err)
 		return models.Task{}, err

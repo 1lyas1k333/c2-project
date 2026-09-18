@@ -66,3 +66,6 @@
 [2026-09-11 15:57:23] client-001 -> dir C:\ && echo OK || echo FAIL
 [2026-09-11 15:57:52] client-001 -> ipconfig && systeminfo | findstr /i "OS Name"
 [2026-09-11 15:58:20] client-001 -> tasklist | findstr /i "go"
+[2026-09-18 16:05:20] client-001 -> ls -la
+[2026-09-18 16:07:10] client-001 -> ls -la
+[2026-09-18 16:07:35] client-001 -> whoami
