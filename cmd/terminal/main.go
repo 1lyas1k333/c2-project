@@ -3,30 +3,20 @@
 package main
 
 import (
-	"bytes"
-	"c2-project/internal/compress"
-	"c2-project/internal/models"
-	"c2-project/internal/protocol"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"c2-project/internal/service/terminal"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// TerminalConfig - структура конфигурации терминала.
-type TerminalConfig struct {
-	ServerURL string `json:"server_url"`
-}
-
-var config TerminalConfig
 var configFile = "configs/terminal.json"
 
 // resultMsg - сообщение с результатом выполнения команды.
@@ -39,8 +29,8 @@ type resultMsg struct {
 // model - состояние приложения.
 type model struct {
 	input    textinput.Model
-	history  []string // Последние 5 команд
-	result   string   // Результат последней команды
+	history  []string
+	result   string
 	status   string
 	clientID string
 	taskID   string
@@ -50,6 +40,7 @@ type model struct {
 	ready    bool
 	width    int
 	height   int
+	service  *terminal.Service // ← СЕРВИС ТЕРМИНАЛА
 }
 
 // Стили
@@ -66,20 +57,12 @@ var (
 	historyStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#8B93A7"))
 
-	resultStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E0E0E0"))
-
 	clientStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#F59E0B")).
 			Bold(true)
 
 	statusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#04B575"))
-
-	historyBoxStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("#3A3A3A")).
-			Padding(0, 1)
 
 	resultBoxStyle = lipgloss.NewStyle().
 			BorderStyle(lipgloss.RoundedBorder()).
@@ -95,6 +78,7 @@ var (
 func main() {
 	// ОТКЛЮЧАЕМ ЛОГИ — они ломают TUI в Windows CMD
 	log.SetOutput(io.Discard)
+
 	for i := 1; i < len(os.Args); i++ {
 		if os.Args[i] == "-local" {
 			configFile = "configs/terminal.local.json"
@@ -102,14 +86,16 @@ func main() {
 		}
 	}
 
-	if err := loadConfig(); err != nil {
+	// Создаём сервис
+	srv, err := terminal.NewService(configFile)
+	if err != nil {
 		fmt.Printf("[WARN] Failed to load config: %v\n", err)
-		fmt.Println("[INFO] Using default server URL: http://localhost:8080")
-		config.ServerURL = "http://localhost:8080"
+		srv, _ = terminal.NewService("configs/terminal.json")
 	}
 
 	loadHistory()
 	m := initialModel()
+	m.service = srv // ← ПЕРЕДАЁМ СЕРВИС В МОДЕЛЬ
 
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
@@ -117,17 +103,6 @@ func main() {
 	}
 
 	saveHistory()
-}
-
-func loadConfig() error {
-	file, err := os.Open(configFile)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	decoder := json.NewDecoder(file)
-	return decoder.Decode(&config)
 }
 
 // История команд
@@ -276,74 +251,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// sendCommandWithResult - отправляет команду и возвращает tea.Cmd с результатом.
+// sendCommandWithResult - отправляет команду через сервис и возвращает tea.Cmd с результатом.
 func (m *model) sendCommandWithResult(cmd string) tea.Cmd {
 	return func() tea.Msg {
-		task := models.Task{
-			ClientID: m.clientID,
-			Command:  cmd,
-			Status:   "pending",
-		}
-
-		token, err := protocol.EncodeRequest(task)
-		if err != nil {
-			return resultMsg{err: fmt.Errorf("encryption error: %v", err)}
-		}
-
-		jsonData, _ := json.Marshal(map[string]interface{}{})
-
-		client := &http.Client{}
-		reqHTTP, err := http.NewRequest("POST", config.ServerURL+"/api/tasks", bytes.NewReader(jsonData))
-		if err != nil {
-			return resultMsg{err: fmt.Errorf("request error: %v", err)}
-		}
-		reqHTTP.Header.Set("Authorization", "Bearer "+token)
-		reqHTTP.Header.Set("Content-Type", "application/json")
-
-		resp, err := client.Do(reqHTTP)
+		// Отправляем команду через сервис
+		taskID, err := m.service.SendCommand(m.clientID, cmd)
 		if err != nil {
 			return resultMsg{err: fmt.Errorf("send error: %v", err)}
 		}
-		defer resp.Body.Close()
 
-		var result map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&result)
-
-		taskID, _ := result["task_id"].(string)
-
-		for i := 0; i < 30; i++ {
-			time.Sleep(1 * time.Second)
-
-			resp2, err := http.Get(fmt.Sprintf("%s/api/result?task_id=%s", config.ServerURL, taskID))
-			if err != nil {
-				continue
-			}
-
-			var result2 map[string]interface{}
-			json.NewDecoder(resp2.Body).Decode(&result2)
-			resp2.Body.Close()
-
-			status, _ := result2["status"].(string)
-
-			if status == "completed" {
-				resultText, _ := result2["result"].(string)
-				resultText = strings.TrimSpace(resultText)
-				resultText = strings.ReplaceAll(resultText, "\r\n", "\n")
-
-				isCompressed := len(resultText) > 0 && (resultText[0] == '\x1f' || resultText[0] == 0x1f)
-				if isCompressed {
-					decompressed, err := compress.Decompress([]byte(resultText))
-					if err == nil {
-						return resultMsg{result: string(decompressed), status: fmt.Sprintf("Command executed on %s", m.clientID)}
-					}
-				}
-
-				return resultMsg{result: resultText, status: fmt.Sprintf("Command executed on %s", m.clientID)}
-			} else if status == "failed" {
-				return resultMsg{status: "Command execution failed"}
-			}
+		// Ждём результат
+		result, err := m.service.WaitForResult(taskID)
+		if err != nil {
+			return resultMsg{status: "Timeout: result not received"}
 		}
-		return resultMsg{status: "Timeout: result not received in 30 seconds"}
+
+		return resultMsg{
+			result: result,
+			status: fmt.Sprintf("Command executed on %s", m.clientID),
+		}
 	}
 }
 
@@ -389,7 +315,6 @@ func (m model) View() string {
 	// Результат (большая область) — адаптивно под высоту окна
 	content.WriteString(statusStyle.Render("Результат:") + "\n")
 	if m.result != "" {
-		// Оставляем место для заголовка (2), истории (7), ввода (3), помощи (2), подвала (1)
 		maxResultLines := m.height - 20
 		if maxResultLines < 5 {
 			maxResultLines = 5
@@ -433,7 +358,6 @@ func (m model) View() string {
 }
 
 // truncateLines - обрезает строки по максимальной ширине.
-// Предотвращает "съезд" рамок при длинных строках.
 func truncateLines(text string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return text

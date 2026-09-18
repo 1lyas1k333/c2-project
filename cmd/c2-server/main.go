@@ -1,73 +1,51 @@
 // Package main - точка входа C2-сервера.
-// Содержит только инициализацию конфигурации, хранилища и роутера.
-// Вся бизнес-логика вынесена в пакеты internal/http и internal/storage.
+// Содержит только парсинг аргументов и запуск сервиса.
 package main
 
 import (
-	"c2-project/internal/api"
-	"c2-project/internal/service"
-	"c2-project/internal/storage"
-	"encoding/json"
+	"c2-project/internal/service/server"
+	"context"
+	"flag"
 	"log"
-	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
-// ServerConfig - структура конфигурации сервера.
-type ServerConfig struct {
-	ListenAddress string `json:"listen_address"`
-}
-
-// configFile - путь к файлу конфигурации.
-var configFile = "configs/server.json"
-
-// loadConfig - загружает конфигурацию из JSON-файла.
-func loadConfig() (*ServerConfig, error) {
-	file, err := os.Open(configFile)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var config ServerConfig
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&config); err != nil {
-		return nil, err
-	}
-	return &config, nil
-}
-
-// main - точка входа сервера.
 func main() {
-	// Проверяем аргумент -local для локального запуска
-	for i := 1; i < len(os.Args); i++ {
-		if os.Args[i] == "-local" {
-			configFile = "configs/server.local.json"
-			break
-		}
+	// Парсим аргументы командной строки
+	localFlag := flag.Bool("local", false, "Use local config (server.local.json)")
+	flag.Parse()
+
+	// Определяем путь к конфигу
+	configFile := "configs/server.json"
+	if *localFlag {
+		configFile = "configs/server.local.json"
 	}
 
-	// Загружаем конфигурацию
-	config, err := loadConfig()
+	// Создаём сервис
+	srv, err := server.NewService(configFile)
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		log.Fatalf("Failed to create server service: %v", err)
 	}
 
-	// Создаём хранилище
-	store := storage.New()
+	// Обработка сигналов Ctrl+C
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	// Создаём сервисы
-	taskService := service.NewTaskService(store)
-	clientService := service.NewClientService(store)
+	// Запускаем сервер в горутине
+	go func() {
+		if err := srv.Run(); err != nil {
+			log.Printf("Server error: %v", err)
+		}
+	}()
 
-	// Создаём HTTP-хендлер
-	handler := api.NewHandler(taskService, clientService)
+	// Ждём сигнала остановки
+	<-ctx.Done()
+	log.Println("[STOP] Received shutdown signal")
 
-	// Регистрируем маршруты
-	mux := http.NewServeMux()
-	api.RegisterRoutes(mux, handler)
-
-	// Запускаем HTTP-сервер
-	log.Printf("C2 Server starting on %s", config.ListenAddress)
-	log.Fatal(http.ListenAndServe(config.ListenAddress, mux))
+	// Штатное завершение
+	if err := srv.Close(context.Background()); err != nil {
+		log.Printf("Error during shutdown: %v", err)
+	}
 }
