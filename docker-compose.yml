@@ -11,6 +11,9 @@ services:
     restart: unless-stopped
     environment:
       - JWT_SECRET=your-256-bit-secret-key-for-jwt-signing
+      - LOG_MODE=production
+    volumes:
+      - ./logs/server:/app/logs
 
   # Клиент 1
   client1:
@@ -24,6 +27,9 @@ services:
     restart: unless-stopped
     environment:
       - JWT_SECRET=your-256-bit-secret-key-for-jwt-signing
+      - LOG_MODE=production
+    volumes:
+      - ./logs/client-001:/app/logs
 
   # Клиент 2
   client2:
@@ -37,6 +43,9 @@ services:
     restart: unless-stopped
     environment:
       - JWT_SECRET=your-256-bit-secret-key-for-jwt-signing
+      - LOG_MODE=production
+    volumes:
+      - ./logs/client-002:/app/logs
 
   # Терминал (интерактивный режим)
   terminal:
@@ -52,6 +61,7 @@ services:
     restart: unless-stopped
     environment:
       - JWT_SECRET=your-256-bit-secret-key-for-jwt-signing
+      - LOG_MODE=production
 
 networks:
   c2-network:

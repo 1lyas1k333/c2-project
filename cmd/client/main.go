@@ -3,6 +3,7 @@
 package main
 
 import (
+	"c2-project/internal/logger"
 	"c2-project/internal/service/client"
 	"context"
 	"flag"
@@ -13,6 +14,10 @@ import (
 )
 
 func main() {
+	// Инициализируем логгер
+	logger.Init()
+	defer logger.Sync()
+
 	// Парсим аргументы командной строки
 	localFlag := flag.Bool("local", false, "Use local config (client.local.json)")
 	idFlag := flag.String("id", "", "Override client ID")

@@ -4,12 +4,12 @@ package server
 
 import (
 	"c2-project/internal/api"
+	"c2-project/internal/logger"
 	"c2-project/internal/service"
 	"c2-project/internal/storage"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"time"
@@ -66,20 +66,16 @@ func NewService(configFile string) (*Service, error) {
 	}, nil
 }
 
-// Run - запускает HTTP-сервер.
-// Блокирует выполнение до получения сигнала остановки.
 func (s *Service) Run() error {
-	log.Printf("C2 Server starting on %s", s.config.ListenAddress)
+	logger.Info("C2 Server starting", logger.String("address", s.config.ListenAddress))
 	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("server error: %w", err)
 	}
 	return nil
 }
 
-// Close - штатное завершение работы сервера.
-// Даёт 5 секунд на завершение текущих запросов.
 func (s *Service) Close(ctx context.Context) error {
-	log.Println("[STOP] Shutting down C2 Server...")
+	logger.Info("Shutting down C2 Server...")
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -88,6 +84,6 @@ func (s *Service) Close(ctx context.Context) error {
 		return fmt.Errorf("shutdown error: %w", err)
 	}
 
-	log.Println("[STOP] C2 Server stopped gracefully")
+	logger.Info("C2 Server stopped gracefully")
 	return nil
 }

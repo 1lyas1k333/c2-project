@@ -1,9 +1,9 @@
 package api
 
 import (
+	"c2-project/internal/logger"
 	"c2-project/internal/service"
 	"encoding/json"
-	"log"
 	"net/http"
 )
 
@@ -38,7 +38,7 @@ func (h *Handler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[OK] Client registered: %s", clientID)
+	logger.Info("Client registered", logger.String("client_id", clientID))
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
@@ -61,7 +61,7 @@ func (h *Handler) TasksHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[TASK] Task created: %s", taskID)
+	logger.Info("Task created", logger.String("task_id", taskID))
 	json.NewEncoder(w).Encode(map[string]string{"status": "created", "task_id": taskID})
 }
 
@@ -90,7 +90,9 @@ func (h *Handler) PollHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[TASK] Task %s found for client %s", task.ID, clientID)
+	logger.Info("Task found for client",
+		logger.String("task_id", task.ID),
+		logger.String("client_id", clientID))
 	w.Header().Set("Authorization", "Bearer "+token)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
@@ -108,7 +110,7 @@ func (h *Handler) ResultsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.taskService.SaveTaskResult(token); err != nil {
-		log.Printf("[ERROR] Failed to save result: %v", err)
+		logger.Error("Failed to save result", logger.Err(err))
 		http.Error(w, "Invalid result", http.StatusBadRequest)
 		return
 	}

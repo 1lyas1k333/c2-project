@@ -3,6 +3,7 @@
 package main
 
 import (
+	"c2-project/internal/logger"
 	"c2-project/internal/service/server"
 	"context"
 	"flag"
@@ -13,6 +14,10 @@ import (
 )
 
 func main() {
+	// Инициализируем логгер
+	logger.Init()
+	defer logger.Sync()
+
 	// Парсим аргументы командной строки
 	localFlag := flag.Bool("local", false, "Use local config (server.local.json)")
 	flag.Parse()
@@ -26,7 +31,7 @@ func main() {
 	// Создаём сервис
 	srv, err := server.NewService(configFile)
 	if err != nil {
-		log.Fatalf("Failed to create server service: %v", err)
+		logger.Fatal("Failed to create server service", logger.Err(err))
 	}
 
 	// Обработка сигналов Ctrl+C
