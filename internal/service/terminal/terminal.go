@@ -7,6 +7,7 @@ import (
 	"c2-project/internal/compress"
 	"c2-project/internal/models"
 	"c2-project/internal/protocol"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -39,9 +40,21 @@ func NewService(configFile string) (*Service, error) {
 		return nil, fmt.Errorf("failed to decode config: %w", err)
 	}
 
+	// Создаём HTTPS-клиент с доверием к самоподписанному сертификату
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: true, // для самоподписанного сертификата
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+	}
+
 	return &Service{
 		config: cfg,
-		client: &http.Client{Timeout: 30 * time.Second},
+		client: &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: transport,
+		},
 	}, nil
 }
 
@@ -89,7 +102,12 @@ func (s *Service) WaitForResult(taskID string) (string, error) {
 	for i := 0; i < 30; i++ {
 		time.Sleep(1 * time.Second)
 
-		resp, err := http.Get(fmt.Sprintf("%s/api/result?task_id=%s", s.config.ServerURL, taskID))
+		req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/result?task_id=%s", s.config.ServerURL, taskID), nil)
+		if err != nil {
+			continue
+		}
+
+		resp, err := s.client.Do(req)
 		if err != nil {
 			continue
 		}

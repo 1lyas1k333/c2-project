@@ -10,6 +10,9 @@ WORKDIR /app
 # Копируем ВСЁ
 COPY . .
 
+# Копируем сертификаты (самоподписанные)
+COPY certs/ ./certs/
+
 # Скачиваем зависимости
 RUN go env -w GOPROXY=https://proxy.golang.org,direct
 RUN go mod download
@@ -19,7 +22,7 @@ RUN go build -o bin/c2-server ./cmd/c2-server
 RUN go build -o bin/client ./cmd/client
 RUN go build -o bin/terminal ./cmd/terminal
 
-# Открываем порт
-EXPOSE 8080
+# Открываем порт (HTTPS)
+EXPOSE 8443
 
 CMD ["./bin/c2-server"]

@@ -67,8 +67,22 @@ func NewService(configFile string) (*Service, error) {
 }
 
 func (s *Service) Run() error {
-	logger.Info("C2 Server starting", logger.String("address", s.config.ListenAddress))
-	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	logger.Info("C2 Server starting (HTTPS)",
+		logger.String("address", s.config.ListenAddress))
+
+	certFile := "certs/server.crt"
+	keyFile := "certs/server.key"
+
+	// Проверяем, что сертификаты существуют
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		return fmt.Errorf("certificate not found: %s (run gen_cert.go first)", certFile)
+	}
+	if _, err := os.Stat(keyFile); os.IsNotExist(err) {
+		return fmt.Errorf("key not found: %s (run gen_cert.go first)", keyFile)
+	}
+
+	// Запускаем HTTPS-сервер
+	if err := s.httpServer.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("server error: %w", err)
 	}
 	return nil

@@ -11,6 +11,7 @@ import (
 	"c2-project/internal/logger"
 	"c2-project/internal/models"
 	"c2-project/internal/protocol"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -58,9 +59,21 @@ func NewService(configFile string, clientIDOverride string) (*Service, error) {
 		logger.Info("Client ID overridden", logger.String("client_id", cfg.ClientID))
 	}
 
+	// Создаём HTTPS-клиент с доверием к самоподписанному сертификату
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: true, // для самоподписанного сертификата
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+	}
+
 	return &Service{
 		config: cfg,
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: transport,
+		},
 	}, nil
 }
 
