@@ -4,9 +4,14 @@
 package storage
 
 import (
-	"c2-project/internal/models"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"c2-project/internal/models"
 )
 
 // Storage - хранилище данных сервера.
@@ -15,6 +20,10 @@ type Storage struct {
 	tasks   map[string]models.Task   // Хранилище задач. Ключ - ID задачи
 	clients map[string]models.Client // Хранилище клиентов. Ключ - ID клиента
 }
+
+// idCounter - атомарный счётчик для генерации уникальных ID задач.
+// Используется вместе с timestamp и случайными байтами.
+var idCounter uint64
 
 // New - создаёт новый экземпляр хранилища.
 func New() *Storage {
@@ -112,6 +121,26 @@ func (s *Storage) UpdateTaskResult(taskID, output, status string) {
 }
 
 // generateID - генерирует уникальный ID задачи.
+// Формат: <timestamp>-<counter>-<random>, например:
+//
+//	"20260925181031-42-a1b2c3d4"
+//
+// Компоненты:
+//   - timestamp (14 цифр) — сортировка по времени создания;
+//   - counter — атомарный счётчик, гарантирует уникальность даже при
+//     вызовах в одну и ту же наносекунду (актуально для Windows, где
+//     разрешение таймера ~15 мс);
+//   - random (8 hex-символов) — дополнительная защита от коллизий
+//     при перезапуске процесса (счётчик начинается с 0).
 func generateID() string {
-	return time.Now().Format("20060102150405.000000000")
+	counter := atomic.AddUint64(&idCounter, 1)
+
+	var random [4]byte
+	_, _ = rand.Read(random[:])
+
+	return fmt.Sprintf("%s-%d-%s",
+		time.Now().Format("20060102150405"),
+		counter,
+		hex.EncodeToString(random[:]),
+	)
 }

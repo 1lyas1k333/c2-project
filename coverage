@@ -1,0 +1,19 @@
+mode: set
+c2-project/internal/crypto/crypto.go:18.2,19.16 2 1
+c2-project/internal/crypto/crypto.go:20.3,21.1 1 0
+c2-project/internal/crypto/crypto.go:23.2,24.16 2 1
+c2-project/internal/crypto/crypto.go:25.3,26.1 1 0
+c2-project/internal/crypto/crypto.go:28.2,29.59 2 1
+c2-project/internal/crypto/crypto.go:30.3,31.1 1 0
+c2-project/internal/crypto/crypto.go:33.2,34.59 2 1
+c2-project/internal/crypto/crypto.go:39.2,40.16 2 1
+c2-project/internal/crypto/crypto.go:41.3,42.1 1 1
+c2-project/internal/crypto/crypto.go:44.2,45.16 2 1
+c2-project/internal/crypto/crypto.go:46.3,47.1 1 0
+c2-project/internal/crypto/crypto.go:49.2,50.16 2 1
+c2-project/internal/crypto/crypto.go:51.3,52.1 1 0
+c2-project/internal/crypto/crypto.go:54.2,55.33 2 1
+c2-project/internal/crypto/crypto.go:56.3,57.1 1 1
+c2-project/internal/crypto/crypto.go:59.2,61.16 3 1
+c2-project/internal/crypto/crypto.go:62.3,63.1 1 1
+c2-project/internal/crypto/crypto.go:65.2,65.23 1 1
