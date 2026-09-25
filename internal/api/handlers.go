@@ -5,6 +5,7 @@ import (
 	"c2-project/internal/service"
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // Handler - структура с зависимостями для хендлеров.
@@ -49,13 +50,13 @@ func (h *Handler) TasksHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := GetTokenFromBearer(r.Header.Get("Authorization"))
-	if token == "" {
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
 		http.Error(w, "Missing or invalid Authorization header", http.StatusBadRequest)
 		return
 	}
 
-	taskID, err := h.taskService.CreateTaskFromToken(token)
+	taskID, err := h.taskService.CreateTaskFromToken(authHeader)
 	if err != nil {
 		http.Error(w, "Invalid token", http.StatusBadRequest)
 		return
