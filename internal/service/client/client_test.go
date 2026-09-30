@@ -2,6 +2,7 @@ package client
 
 import (
 	"crypto/tls"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -127,5 +128,25 @@ func TestSendResult_EmptyOutput(t *testing.T) {
 
 	if got := atomic.LoadInt32(&calls); got != 1 {
 		t.Errorf("server calls = %d, want 1", got)
+	}
+}
+
+func TestSendResult_ErrorIsSentinel(t *testing.T) {
+	// Сервер закрыт → sendResult вернёт ошибку.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	server.Close()
+
+	s := newTestClient(server.URL)
+
+	largeOutput := strings.Repeat("x", 20000)
+	err := s.sendResult("task-1", largeOutput, "completed")
+
+	if err == nil {
+		t.Fatal("sendResult() expected error")
+	}
+	if !errors.Is(err, ErrChunkSendFailed) {
+		t.Errorf("error = %v, want ErrChunkSendFailed", err)
 	}
 }

