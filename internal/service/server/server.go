@@ -61,11 +61,10 @@ func NewService(configFile string) (*Service, error) {
 		store:  store,
 		httpServer: &http.Server{
 			Addr:    cfg.ListenAddress,
-			Handler: mux,
+			Handler: api.LoggingMiddleware(mux),
 		},
 	}, nil
 }
-
 func (s *Service) Run() error {
 	logger.Info("C2 Server starting (HTTPS)",
 		logger.String("address", s.config.ListenAddress))
