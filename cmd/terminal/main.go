@@ -198,6 +198,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd == "" {
 				return m, nil
 			}
+			// Обработка upload: upload <local> <remote>
+			if strings.HasPrefix(cmd, "upload ") {
+				parts := strings.Fields(cmd)
+				if len(parts) < 3 {
+					m.status = "Usage: upload <local_path> <remote_path>"
+					m.input.SetValue("")
+					return m, nil
+				}
+				m.history = append(m.history, fmt.Sprintf("> %s [%s]", cmd, m.clientID))
+				if len(m.history) > 5 {
+					m.history = m.history[1:]
+				}
+				m.status = fmt.Sprintf("Uploading %s → %s...", parts[1], parts[2])
+				m.waiting = true
+				m.result = ""
+				addHistory(m.clientID, cmd)
+				m.input.SetValue("")
+				return m, m.uploadCmd(parts[1], parts[2])
+			}
+
+			// Обработка download: download <remote> <local>
+			if strings.HasPrefix(cmd, "download ") {
+				parts := strings.Fields(cmd)
+				if len(parts) < 3 {
+					m.status = "Usage: download <remote_path> <local_path>"
+					m.input.SetValue("")
+					return m, nil
+				}
+				m.history = append(m.history, fmt.Sprintf("> %s [%s]", cmd, m.clientID))
+				if len(m.history) > 5 {
+					m.history = m.history[1:]
+				}
+				m.status = fmt.Sprintf("Downloading %s ← %s...", parts[1], parts[2])
+				m.waiting = true
+				m.result = ""
+				addHistory(m.clientID, cmd)
+				m.input.SetValue("")
+				return m, m.downloadCmd(parts[1], parts[2])
+			}
 
 			if cmd == "/help" || cmd == "/?" {
 				m.showHelp = !m.showHelp
@@ -275,6 +314,46 @@ func (m *model) sendCommandWithResult(cmd string) tea.Cmd {
 	}
 }
 
+// uploadCmd — отправляет файл клиенту через сервер.
+func (m *model) uploadCmd(localPath, remotePath string) tea.Cmd {
+	return func() tea.Msg {
+		taskID, err := m.service.SendFile(m.clientID, localPath, remotePath)
+		if err != nil {
+			return resultMsg{err: fmt.Errorf("upload error: %v", err)}
+		}
+		return resultMsg{
+			result: fmt.Sprintf("File sent to client %s\n  task_id: %s\n  local:  %s\n  remote: %s",
+				m.clientID, taskID, localPath, remotePath),
+			status: "Upload started",
+		}
+	}
+}
+
+// downloadCmd — запрашивает файл с клиента и сохраняет локально.
+func (m *model) downloadCmd(remotePath, localPath string) tea.Cmd {
+	return func() tea.Msg {
+		taskID, err := m.service.RequestFile(m.clientID, remotePath)
+		if err != nil {
+			return resultMsg{err: fmt.Errorf("download error: %v", err)}
+		}
+
+		result, err := m.service.WaitForResult(taskID)
+		if err != nil {
+			return resultMsg{err: fmt.Errorf("wait error: %v", err)}
+		}
+
+		if err := terminal.SaveDownloadedFile(result, localPath); err != nil {
+			return resultMsg{err: fmt.Errorf("save error: %v", err)}
+		}
+
+		return resultMsg{
+			result: fmt.Sprintf("File saved: %s\n  source: %s\n  checksum: verified (SHA-256)",
+				localPath, remotePath),
+			status: "Download complete",
+		}
+	}
+}
+
 func (m *model) showClients() {
 	m.history = append(m.history, "Available clients:")
 	m.history = append(m.history, fmt.Sprintf("  - %s (current)", m.clientID))
@@ -346,7 +425,10 @@ func (m model) View() string {
 
 	// Помощь
 	if m.showHelp {
-		help := helpStyle.Render(`/help - помощь | /clients - список клиентов | /select <id> - выбрать | /clear - очистить | q - выход`)
+		help := helpStyle.Render(`/help - помощь | /clients - клиенты | /select <id> - выбрать | /clear - очистить
+upload <local> <remote>   - отправить файл клиенту
+download <remote> <local> - скачать файл с клиента
+q - выход`)
 		content.WriteString(help + "\n")
 	} else {
 		content.WriteString(helpStyle.Render("Enter /help для справки | q - выход") + "\n")
