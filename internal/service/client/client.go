@@ -130,7 +130,11 @@ func (s *Service) Close() error {
 
 // register - регистрирует клиента на сервере.
 func (s *Service) register() error {
-	token, err := jwt.EncodeClientID(s.config.ClientID)
+	encrypted, err := crypto.Encrypt([]byte(s.config.ClientID))
+	if err != nil {
+		return err
+	}
+	token, err := jwt.Encode(encrypted)
 	if err != nil {
 		return err
 	}
@@ -152,7 +156,11 @@ func (s *Service) register() error {
 
 // poll - опрашивает сервер на наличие задач.
 func (s *Service) poll() (models.Task, error) {
-	token, err := jwt.EncodeClientID(s.config.ClientID)
+	encrypted, err := crypto.Encrypt([]byte(s.config.ClientID))
+	if err != nil {
+		return models.Task{}, err
+	}
+	token, err := jwt.Encode(encrypted)
 	if err != nil {
 		return models.Task{}, err
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"c2-project/internal/crypto"
 	"c2-project/internal/jwt"
 	"c2-project/internal/models"
 	"c2-project/internal/protocol"
@@ -28,6 +29,20 @@ func newTestHandlerWithStore() (*Handler, *storage.Storage) {
 	taskSvc := service.NewTaskService(store)
 	clientSvc := service.NewClientService(store)
 	return NewHandler(taskSvc, clientSvc), store
+}
+
+// encodeClientIDForTest — шифрует client_id и оборачивает в JWT (как это делает клиент).
+func encodeClientIDForTest(t *testing.T, clientID string) string {
+	t.Helper()
+	encrypted, err := crypto.Encrypt([]byte(clientID))
+	if err != nil {
+		t.Fatalf("crypto.Encrypt() error = %v", err)
+	}
+	token, err := jwt.Encode(encrypted)
+	if err != nil {
+		t.Fatalf("jwt.Encode() error = %v", err)
+	}
+	return token
 }
 
 // doRequest — удобная обёртка для запросов через хендлер.
@@ -97,10 +112,7 @@ func TestGetTokenFromBearer(t *testing.T) {
 // --- GetClientIDFromBearer ---
 
 func TestGetClientIDFromBearer_Valid(t *testing.T) {
-	token, err := jwt.EncodeClientID("client-001")
-	if err != nil {
-		t.Fatalf("EncodeClientID() error = %v", err)
-	}
+	token := encodeClientIDForTest(t, "client-001")
 
 	got := GetClientIDFromBearer("Bearer " + token)
 	if got != "client-001" {
@@ -135,7 +147,7 @@ func TestGetClientIDFromBearer_Invalid(t *testing.T) {
 func TestRegisterHandler_Success(t *testing.T) {
 	h := newTestHandler()
 
-	token, _ := jwt.EncodeClientID("client-001")
+	token := encodeClientIDForTest(t, "client-001")
 	rec := doRequest(h.RegisterHandler, "POST", "/api/register", "Bearer "+token)
 
 	if rec.Code != http.StatusOK {
@@ -152,7 +164,7 @@ func TestRegisterHandler_Success(t *testing.T) {
 func TestRegisterHandler_RegistersInStorage(t *testing.T) {
 	h, store := newTestHandlerWithStore()
 
-	token, _ := jwt.EncodeClientID("client-042")
+	token := encodeClientIDForTest(t, "client-042")
 	rec := doRequest(h.RegisterHandler, "POST", "/api/register", "Bearer "+token)
 
 	if rec.Code != http.StatusOK {
@@ -173,7 +185,7 @@ func TestRegisterHandler_RegistersInStorage(t *testing.T) {
 
 func TestRegisterHandler_WrongMethod(t *testing.T) {
 	h := newTestHandler()
-	token, _ := jwt.EncodeClientID("client-001")
+	token := encodeClientIDForTest(t, "client-001")
 
 	rec := doRequest(h.RegisterHandler, "GET", "/api/register", "Bearer "+token)
 
@@ -285,7 +297,7 @@ func TestTasksHandler_InvalidToken(t *testing.T) {
 func TestPollHandler_NoTasks(t *testing.T) {
 	h := newTestHandler()
 
-	token, _ := jwt.EncodeClientID("client-001")
+	token := encodeClientIDForTest(t, "client-001")
 	rec := doRequest(h.PollHandler, "POST", "/api/poll", "Bearer "+token)
 
 	if rec.Code != http.StatusOK {
@@ -305,7 +317,7 @@ func TestPollHandler_ReturnsTask(t *testing.T) {
 	// Создаём задачу напрямую в storage.
 	taskID := store.CreateTask(models.Task{ClientID: "client-001", Command: "whoami"})
 
-	token, _ := jwt.EncodeClientID("client-001")
+	token := encodeClientIDForTest(t, "client-001")
 	rec := doRequest(h.PollHandler, "POST", "/api/poll", "Bearer "+token)
 
 	if rec.Code != http.StatusOK {
@@ -353,7 +365,7 @@ func TestPollHandler_UpdatesLastSeen(t *testing.T) {
 	h, store := newTestHandlerWithStore()
 
 	// Регистрируем клиента.
-	regToken, _ := jwt.EncodeClientID("client-001")
+	regToken := encodeClientIDForTest(t, "client-001")
 	doRequest(h.RegisterHandler, "POST", "/api/register", "Bearer "+regToken)
 
 	before, _ := store.GetClient("client-001")
@@ -364,7 +376,7 @@ func TestPollHandler_UpdatesLastSeen(t *testing.T) {
 	// time.Sleep(20 * time.Millisecond) — раскомментируй, если тест флапает.
 
 	// Poll
-	pollToken, _ := jwt.EncodeClientID("client-001")
+	pollToken := encodeClientIDForTest(t, "client-001")
 	doRequest(h.PollHandler, "POST", "/api/poll", "Bearer "+pollToken)
 
 	after, _ := store.GetClient("client-001")
@@ -525,7 +537,7 @@ func TestFullScenario(t *testing.T) {
 	RegisterRoutes(mux, h)
 
 	// 1. Клиент регистрируется.
-	clientToken, _ := jwt.EncodeClientID("client-001")
+	clientToken := encodeClientIDForTest(t, "client-001")
 	req := httptest.NewRequest("POST", "/api/register", nil)
 	req.Header.Set("Authorization", "Bearer "+clientToken)
 	rec := httptest.NewRecorder()

@@ -3,6 +3,7 @@
 package api
 
 import (
+	"c2-project/internal/crypto"
 	"c2-project/internal/jwt"
 	"net/http"
 	"strings"
@@ -29,14 +30,24 @@ func GetTokenFromBearer(authHeader string) string {
 }
 
 // GetClientIDFromBearer - извлекает client_id из JWT-токена в заголовке Authorization.
+// Токен содержит зашифрованный (AES-GCM) client_id внутри поля Data.
 func GetClientIDFromBearer(authHeader string) string {
 	parts := strings.SplitN(authHeader, " ", 2)
 	if len(parts) != 2 || parts[0] != "Bearer" {
 		return ""
 	}
-	clientID, err := jwt.DecodeClientID(parts[1])
+
+	// 1. Достаём зашифрованную строку из JWT (поле Data)
+	encrypted, err := jwt.Decode(parts[1])
 	if err != nil {
 		return ""
 	}
-	return clientID
+
+	// 2. Расшифровываем AES-GCM
+	decrypted, err := crypto.Decrypt(encrypted)
+	if err != nil {
+		return ""
+	}
+
+	return string(decrypted)
 }
